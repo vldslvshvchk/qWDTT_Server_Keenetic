@@ -14,8 +14,8 @@ import (
 const rawInterface = "wdttraw0"
 
 // TURN can hide a relay close, but RAW clients send keepalives roughly every
-// 15 seconds. Two missed keepalives are enough to release a stale session.
-const rawIdleTimeout = 40 * time.Second
+// 15 seconds. Expire a session after two missed keepalives.
+const rawIdleTimeout = 25 * time.Second
 
 // rawRouter is deliberately independent from WireGuard.  The Android
 // rawtun client sends IPv4 packets directly; the router's kernel then routes
@@ -26,8 +26,6 @@ type rawRouter struct {
 	sessions  map[string][]*rawConn
 	rr        map[string]int
 	chunk     map[string]int
-	devices   map[string]string
-	nextIP    int
 	logs      *LogBook
 	traffic   *TrafficStats
 	firstUp   uint32
@@ -121,15 +119,16 @@ func newRawRouter(ctx context.Context, runner CommandRunner, network, wan string
 	if wan == "" {
 		wan = "br0"
 	}
-	// RAW is a real routed interface.  Enabling forwarding here is important
+	// RAW is a real routed interface. Enabling forwarding here is important
 	// when RAW is enabled without the WireGuard listener or after NDMS rebuilt
 	// the firewall.
 	if err := runner.Run(ctx, "sysctl", "-w", "net.ipv4.ip_forward=1"); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("enable ipv4 forwarding: %w", err)
 	}
-	// Keenetic may have a terminal reject before appended rules.  Keep the
-	// managed RAW rules at the top, and bind NAT to the actual configured WAN.
+	// Keep the working transport rules from the last upstream commit. Profile
+	// restrictions are handled separately; these rules only make routed RAW
+	// traffic reach the WAN and return to the TUN.
 	firewall := [][]string{
 		{"-t", "nat", "-C", "POSTROUTING", "-s", network, "-o", wan, "-j", "MASQUERADE"},
 		{"-C", "FORWARD", "-i", rawInterface, "-j", "ACCEPT"},
@@ -144,7 +143,6 @@ func newRawRouter(ctx context.Context, runner CommandRunner, network, wan string
 		for i := range add {
 			if add[i] == "-C" {
 				add[i] = "-I"
-				// iptables syntax is `-I CHAIN 1`, not `-I 1 CHAIN`.
 				if i+1 < len(add) {
 					add = append(add[:i+2], append([]string{"1"}, add[i+2:]...)...)
 				}
@@ -156,17 +154,12 @@ func newRawRouter(ctx context.Context, runner CommandRunner, network, wan string
 			return nil, fmt.Errorf("raw firewall: %w", err)
 		}
 	}
-	// Keenetic commonly names the Internet interface eth3/ppp0 while the UI
-	// default is br0. A source-only MASQUERADE rule is therefore required;
-	// otherwise RAW packets leave wdttraw0 but never receive return traffic.
 	if err := runner.Run(ctx, "iptables", "-t", "nat", "-C", "POSTROUTING", "-s", network, "-j", "MASQUERADE"); err != nil {
 		if err := runner.Run(ctx, "iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", network, "-j", "MASQUERADE"); err != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("raw NAT: %w", err)
 		}
 	}
-	// TCP over a 1300-byte TUN can otherwise black-hole large SYN packets on
-	// paths with a smaller PMTU.
 	for _, args := range [][]string{
 		{"-t", "mangle", "-C", "FORWARD", "-s", network, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"},
 		{"-t", "mangle", "-C", "FORWARD", "-d", network, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"},
@@ -182,7 +175,7 @@ func newRawRouter(ctx context.Context, runner CommandRunner, network, wan string
 			_ = runner.Run(ctx, "iptables", add...)
 		}
 	}
-	r := &rawRouter{file: f, sessions: make(map[string][]*rawConn), rr: make(map[string]int), chunk: make(map[string]int), devices: make(map[string]string)}
+	r := &rawRouter{file: f, sessions: make(map[string][]*rawConn), rr: make(map[string]int), chunk: make(map[string]int)}
 	go r.downlink(ctx)
 	return r, nil
 }
@@ -225,17 +218,6 @@ func (r *rawRouter) add(ip string, c net.Conn, traffic *ProfileSession) *rawConn
 	return w
 }
 
-func (r *rawRouter) deviceIP(network, key string) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if ip := r.devices[key]; ip != "" {
-		return ip
-	}
-	ip := rawIP(network, r.nextIP)
-	r.nextIP++
-	r.devices[key] = ip
-	return ip
-}
 func (r *rawRouter) remove(ip string, w *rawConn) {
 	r.mu.Lock()
 	items := r.sessions[ip]
@@ -508,16 +490,18 @@ func (s Service) handleRaw(ctx context.Context, c net.Conn, router *rawRouter, p
 	profileTraffic := s.ProfileTraffic.ConnectMode(profile.ID, "RAW")
 	defer s.ProfileTraffic.Disconnect(profileTraffic)
 	profileTraffic.Touch()
-	// All relay workers for one client send the same device ID. Allocate one
-	// virtual address per device, otherwise several clients sharing a profile
-	// would receive the same IP and their downlink packets would collide.
-	ip := router.deviceIP(s.Config.Server.RawNetwork, profile.ID+"\x00"+parts[0])
+	// RAW uses the same stable-per-profile addressing model as WireGuard.
+	// The netfilter script can therefore install restrictions before any
+	// client connects and does not need a runtime firewall reconciler.
+	ip := profile.RawIP
 	if strings.HasPrefix(first, "GETCONF_RAW:") {
 		_, _ = c.Write([]byte(fmt.Sprintf("RAWCONF:%s|%s|%d", ip, s.clientDNS(), s.Config.Server.RawMTU)))
 	}
 	s.Logs.Add("INFO", "[RAW profile=%s device=%s] assigned %s", profile.ID, parts[0], ip)
 	w := router.add(ip, c, profileTraffic)
-	defer router.remove(ip, w)
+	defer func() {
+		router.remove(ip, w)
+	}()
 	buf := make([]byte, 2048)
 	lastActivity := time.Now()
 	for {

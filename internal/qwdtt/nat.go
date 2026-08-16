@@ -3,6 +3,7 @@ package qwdtt
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 func ApplyNAT(ctx context.Context, r CommandRunner, wan, network string) error {
@@ -156,14 +157,71 @@ func EnsureNATMode(ctx context.Context, r CommandRunner, wan, network string, in
 // EnsureProfileAccessPolicies isolates Internet-only profiles by their fixed
 // WireGuard source address while allowing other profiles to retain LAN access.
 func EnsureProfileAccessPolicies(ctx context.Context, r CommandRunner, profiles []ConnectionProfile) error {
-	return ensureProfilePolicies(ctx, r, profiles, FirewallConfig{})
+	return ensureProfilePolicies(ctx, r, profiles, FirewallConfig{}, false)
 }
 
 func EnsureGlobalFirewallPolicies(ctx context.Context, r CommandRunner, profiles []ConnectionProfile, firewall FirewallConfig) error {
-	return ensureProfilePolicies(ctx, r, profiles, firewall)
+	return ensureProfilePolicies(ctx, r, profiles, firewall, false)
 }
 
-func ensureProfilePolicies(ctx context.Context, r CommandRunner, profiles []ConnectionProfile, global FirewallConfig) error {
+// EnsureGlobalFirewallPoliciesWithRaw applies the same UI firewall policy to
+// both the WireGuard and RAW address of every profile.
+func EnsureGlobalFirewallPoliciesWithRaw(ctx context.Context, r CommandRunner, profiles []ConnectionProfile, firewall FirewallConfig) error {
+	return ensureProfilePolicies(ctx, r, profiles, firewall, true)
+}
+
+// EnsureProfileFirewallHooks restores the managed chains and interface jumps
+// used by the WireGuard policy implementation. RAW rules are owned by the
+// netfilter script and are not installed from the runtime.
+func EnsureProfileFirewallHooks(ctx context.Context, r CommandRunner, raw bool) error {
+	if r == nil {
+		return fmt.Errorf("profile policy runner is nil")
+	}
+	const forwardChain = "QWDTT_PROFILE_FWD"
+	const inputChain = "QWDTT_PROFILE_IN"
+	for _, chain := range []string{forwardChain, inputChain} {
+		_ = r.Run(ctx, "iptables", "-N", chain)
+	}
+	interfaces := []string{"wdtt0"}
+	if raw {
+		interfaces = append(interfaces, rawInterface)
+	}
+	for _, iface := range interfaces {
+		for range 16 {
+			_ = r.Run(ctx, "iptables", "-D", "FORWARD", "-i", iface, "-j", forwardChain)
+		}
+		for range 16 {
+			_ = r.Run(ctx, "iptables", "-D", "INPUT", "-i", iface, "-j", inputChain)
+		}
+		for range 16 {
+			_ = r.Run(ctx, "iptables", "-D", "FORWARD", "-i", iface, "-j", "ACCEPT")
+		}
+		for range 16 {
+			_ = r.Run(ctx, "iptables", "-D", "FORWARD", "-o", iface, "-j", "ACCEPT")
+		}
+		for range 16 {
+			_ = r.Run(ctx, "iptables", "-D", "INPUT", "-i", iface, "-j", "ACCEPT")
+		}
+		if err := r.Run(ctx, "iptables", "-I", "FORWARD", "1", "-i", iface, "-j", forwardChain); err != nil {
+			return err
+		}
+		if err := r.Run(ctx, "iptables", "-I", "INPUT", "1", "-i", iface, "-j", inputChain); err != nil {
+			return err
+		}
+		if err := r.Run(ctx, "iptables", "-I", "FORWARD", "2", "-i", iface, "-j", "ACCEPT"); err != nil {
+			return err
+		}
+		if err := r.Run(ctx, "iptables", "-I", "FORWARD", "2", "-o", iface, "-j", "ACCEPT"); err != nil {
+			return err
+		}
+		if err := r.Run(ctx, "iptables", "-I", "INPUT", "2", "-i", iface, "-j", "ACCEPT"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureProfilePolicies(ctx context.Context, r CommandRunner, profiles []ConnectionProfile, global FirewallConfig, raw bool) error {
 	if r == nil {
 		return fmt.Errorf("profile policy runner is nil")
 	}
@@ -175,15 +233,8 @@ func ensureProfilePolicies(ctx context.Context, r CommandRunner, profiles []Conn
 			return err
 		}
 	}
-	if err := r.Run(ctx, "iptables", "-C", "FORWARD", "-i", "wdtt0", "-j", forwardChain); err != nil {
-		if err := r.Run(ctx, "iptables", "-I", "FORWARD", "1", "-i", "wdtt0", "-j", forwardChain); err != nil {
-			return err
-		}
-	}
-	if err := r.Run(ctx, "iptables", "-C", "INPUT", "-i", "wdtt0", "-j", inputChain); err != nil {
-		if err := r.Run(ctx, "iptables", "-I", "INPUT", "1", "-i", "wdtt0", "-j", inputChain); err != nil {
-			return err
-		}
+	if err := EnsureProfileFirewallHooks(ctx, r, raw); err != nil {
+		return err
 	}
 	// Do not reject the entire 10.0.0.0/8 range here: qWDTT itself uses a
 	// 10.x WireGuard network and Keenetic can pass routed packets through its
@@ -194,35 +245,55 @@ func ensureProfilePolicies(ctx context.Context, r CommandRunner, profiles []Conn
 		if !profile.Enabled {
 			continue
 		}
-		source := profile.ClientIP + "/32"
-		if profile.AccessMode == RouteInternet {
-			// Keenetic may transparently redirect public DNS (for example
-			// 1.1.1.1:53) to its local DNS proxy before the filter chain sees the
-			// packet. Permit only DNS to private destinations; all other access to
-			// the router and LAN remains blocked below.
-			for _, protocol := range []string{"udp", "tcp"} {
-				if err := r.Run(ctx, "iptables", "-A", forwardChain, "-s", source, "-p", protocol, "--dport", "53", "-j", "ACCEPT"); err != nil {
-					return err
-				}
-				if err := r.Run(ctx, "iptables", "-A", inputChain, "-s", source, "-p", protocol, "--dport", "53", "-j", "ACCEPT"); err != nil {
-					return err
+		sources := []string{profile.ClientIP + "/32"}
+		if raw && profile.RawIP != "" {
+			sources = append(sources, profile.RawIP+"/32")
+		}
+		for _, source := range sources {
+			profileFirewall := profile.Firewall
+			if len(global.Rules) > 0 || len(global.Addresses) > 0 || len(global.Ports) > 0 {
+				profileFirewall = global
+			}
+			// The default client DNS is the Keenetic resolver on the LAN
+			// address. If the UI blocks a private subnet, keep DNS available so
+			// the client does not appear to lose all Internet access.
+			if firewallBlocksPrivate(profileFirewall) {
+				for _, protocol := range []string{"udp", "tcp"} {
+					for _, network := range privateNetworks {
+						if err := r.Run(ctx, "iptables", "-A", forwardChain, "-s", source, "-d", network, "-p", protocol, "--dport", "53", "-j", "ACCEPT"); err != nil {
+							return err
+						}
+						if err := r.Run(ctx, "iptables", "-A", inputChain, "-s", source, "-d", network, "-p", protocol, "--dport", "53", "-j", "ACCEPT"); err != nil {
+							return err
+						}
+					}
 				}
 			}
-			for _, network := range privateNetworks {
-				if err := r.Run(ctx, "iptables", "-A", forwardChain, "-s", source, "-d", network, "-j", "REJECT"); err != nil {
-					return err
+			if profile.AccessMode == RouteInternet {
+				// Keenetic may transparently redirect public DNS (for example
+				// 1.1.1.1:53) to its local DNS proxy before the filter chain sees the
+				// packet. Permit only DNS to private destinations; all other access to
+				// the router and LAN remains blocked below.
+				for _, protocol := range []string{"udp", "tcp"} {
+					if err := r.Run(ctx, "iptables", "-A", forwardChain, "-s", source, "-p", protocol, "--dport", "53", "-j", "ACCEPT"); err != nil {
+						return err
+					}
+					if err := r.Run(ctx, "iptables", "-A", inputChain, "-s", source, "-p", protocol, "--dport", "53", "-j", "ACCEPT"); err != nil {
+						return err
+					}
 				}
-				if err := r.Run(ctx, "iptables", "-A", inputChain, "-s", source, "-d", network, "-j", "REJECT"); err != nil {
-					return err
+				for _, network := range privateNetworks {
+					if err := r.Run(ctx, "iptables", "-A", forwardChain, "-s", source, "-d", network, "-j", "REJECT"); err != nil {
+						return err
+					}
+					if err := r.Run(ctx, "iptables", "-A", inputChain, "-s", source, "-d", network, "-j", "REJECT"); err != nil {
+						return err
+					}
 				}
 			}
-		}
-		firewall := profile.Firewall
-		if len(global.Rules) > 0 || len(global.Addresses) > 0 || len(global.Ports) > 0 {
-			firewall = global
-		}
-		if err := ensureProfileFirewall(ctx, r, forwardChain, inputChain, source, firewall); err != nil {
-			return err
+			if err := ensureProfileFirewall(ctx, r, forwardChain, inputChain, source, profileFirewall); err != nil {
+				return err
+			}
 		}
 	}
 	if err := r.Run(ctx, "iptables", "-A", forwardChain, "-j", "RETURN"); err != nil {
@@ -231,7 +302,35 @@ func ensureProfilePolicies(ctx context.Context, r CommandRunner, profiles []Conn
 	return r.Run(ctx, "iptables", "-A", inputChain, "-j", "RETURN")
 }
 
+func firewallBlocksPrivate(f FirewallConfig) bool {
+	rules := f.Rules
+	if len(rules) == 0 && (len(f.Addresses) > 0 || len(f.Ports) > 0) {
+		return f.AddressMode == "block" || f.PortMode == "block"
+	}
+	for _, rule := range rules {
+		if rule.Enabled != nil && !*rule.Enabled || rule.Action != "block" {
+			continue
+		}
+		if len(rule.Addresses) == 0 {
+			return true
+		}
+		for _, address := range rule.Addresses {
+			address = strings.TrimSpace(address)
+			if strings.HasPrefix(address, "10.") || strings.HasPrefix(address, "172.") || strings.HasPrefix(address, "192.168.") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func ensureProfileFirewall(ctx context.Context, r CommandRunner, forwardChain, inputChain, source string, firewall FirewallConfig) error {
+	return ensureProfileFirewallBeforeReturn(ctx, r, forwardChain, inputChain, source, firewall, func(chain string, args ...string) error {
+		return r.Run(ctx, "iptables", append([]string{"-A", chain}, args...)...)
+	})
+}
+
+func ensureProfileFirewallBeforeReturn(ctx context.Context, r CommandRunner, forwardChain, inputChain, source string, firewall FirewallConfig, add func(string, ...string) error) error {
 	rules := firewall.Rules
 	if len(rules) == 0 && (len(firewall.Addresses) > 0 || len(firewall.Ports) > 0) {
 		action := "allow"
@@ -244,9 +343,6 @@ func ensureProfileFirewall(ctx context.Context, r CommandRunner, forwardChain, i
 		return nil
 	}
 	chains := []string{forwardChain, inputChain}
-	add := func(chain string, args ...string) error {
-		return r.Run(ctx, "iptables", append([]string{"-A", chain}, args...)...)
-	}
 	for _, chain := range chains {
 		for _, rule := range rules {
 			if rule.Enabled != nil && !*rule.Enabled {

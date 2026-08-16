@@ -73,6 +73,7 @@ type ConnectionProfile struct {
 	Name       string         `json:"name"`
 	Enabled    bool           `json:"enabled"`
 	ClientIP   string         `json:"clientIP"`
+	RawIP      string         `json:"rawIP,omitempty"`
 	VKHash     string         `json:"vkHash"`
 	VKHashes   []string       `json:"vkHashes,omitempty"`
 	Workers    int            `json:"workers,omitempty"`
@@ -161,6 +162,13 @@ func (c Config) Validate() error {
 	broadcast := lastIPv4(network)
 	ids := make(map[string]bool)
 	ips := make(map[string]bool)
+	rawIPs := make(map[string]bool)
+	var rawNetwork *net.IPNet
+	var rawGatewayIP net.IP
+	if c.Server.RawPort > 0 {
+		_, rawNetwork, _ = net.ParseCIDR(c.Server.RawNetwork)
+		rawGatewayIP = net.ParseIP(rawGateway(c.Server.RawNetwork)).To4()
+	}
 	for i, profile := range c.Server.Profiles {
 		if strings.TrimSpace(profile.ID) == "" {
 			return fmt.Errorf("server.profiles[%d].id is required", i)
@@ -191,6 +199,17 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate profile clientIP %q", canonicalIP)
 		}
 		ips[canonicalIP] = true
+		if rawNetwork != nil {
+			rawIP := net.ParseIP(strings.TrimSpace(profile.RawIP)).To4()
+			if rawIP == nil || !rawNetwork.Contains(rawIP) || rawIP.Equal(rawGatewayIP) || rawIP.Equal(lastIPv4(rawNetwork)) {
+				return fmt.Errorf("profile %q has invalid rawIP %q", profile.Name, profile.RawIP)
+			}
+			canonicalRawIP := rawIP.String()
+			if rawIPs[canonicalRawIP] {
+				return fmt.Errorf("duplicate profile rawIP %q", canonicalRawIP)
+			}
+			rawIPs[canonicalRawIP] = true
+		}
 	}
 	if err := validateFirewall(c.Firewall); err != nil {
 		return fmt.Errorf("firewall: %w", err)
@@ -288,6 +307,7 @@ func (c *Config) NormalizeProfiles() {
 			Name:     "Основной",
 			Enabled:  true,
 			ClientIP: clientIP,
+			RawIP:    rawIP(c.Server.RawNetwork, 0),
 			VKHash:   c.Server.VKHash,
 			DTLSPort: port,
 			AccessMode: func() RouteMode {
@@ -327,6 +347,35 @@ func (c *Config) NormalizeProfiles() {
 		}
 		if profile.Firewall.PortMode == "" {
 			profile.Firewall.PortMode = "allow"
+		}
+	}
+	if _, rawNetwork, err := net.ParseCIDR(c.Server.RawNetwork); err == nil && rawNetwork.IP.To4() != nil {
+		gateway := net.ParseIP(rawGateway(c.Server.RawNetwork)).To4()
+		broadcast := lastIPv4(rawNetwork)
+		used := make(map[string]bool, len(c.Server.Profiles))
+		for i := range c.Server.Profiles {
+			current := net.ParseIP(strings.TrimSpace(c.Server.Profiles[i].RawIP)).To4()
+			if current == nil || !rawNetwork.Contains(current) || current.Equal(gateway) || current.Equal(broadcast) || used[current.String()] {
+				c.Server.Profiles[i].RawIP = ""
+				continue
+			}
+			c.Server.Profiles[i].RawIP = current.String()
+			used[current.String()] = true
+		}
+		candidate := net.ParseIP(rawIP(c.Server.RawNetwork, 0)).To4()
+		for i := range c.Server.Profiles {
+			if c.Server.Profiles[i].RawIP != "" {
+				continue
+			}
+			for rawNetwork.Contains(candidate) && (candidate.Equal(gateway) || candidate.Equal(broadcast) || used[candidate.String()]) {
+				candidate = nextIPv4(candidate)
+			}
+			if !rawNetwork.Contains(candidate) || candidate.Equal(broadcast) {
+				continue
+			}
+			c.Server.Profiles[i].RawIP = candidate.String()
+			used[candidate.String()] = true
+			candidate = nextIPv4(candidate)
 		}
 	}
 	if _, network, err := net.ParseCIDR(c.Server.Network); err == nil && network.IP.To4() != nil {

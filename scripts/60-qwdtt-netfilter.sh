@@ -1,7 +1,7 @@
 #!/bin/sh
 # qWDTT rules for Keenetic NDMS netfilter.d.
 [ "$type" = "ip6tables" ] && exit 0
-case "$table" in filter|nat) ;; *) exit 0 ;; esac
+case "$table" in filter|nat|mangle) ;; *) exit 0 ;; esac
 
 IPTABLES=/opt/sbin/iptables
 [ -x "$IPTABLES" ] || IPTABLES=iptables
@@ -40,6 +40,19 @@ if [ "$table" = nat ]; then
 	if [ -n "$RAWPORT" ]; then
 		run -t nat -C POSTROUTING -s "$RAWNETWORK" -o "$WAN" -j MASQUERADE || \
 			run -t nat -I POSTROUTING 1 -s "$RAWNETWORK" -o "$WAN" -j MASQUERADE
+		# The configured WAN may be br0 while the actual uplink is eth3/ppp0.
+		# Keep RAW internet access working regardless of the egress name.
+		run -t nat -C POSTROUTING -s "$RAWNETWORK" -j MASQUERADE || \
+			run -t nat -I POSTROUTING 1 -s "$RAWNETWORK" -j MASQUERADE
+	fi
+elif [ "$table" = mangle ]; then
+	# RAW uses a smaller MTU than the physical WAN. Clamp TCP SYN packets so
+	# PMTU discovery cannot be blocked by the router or an upstream provider.
+	if [ -n "$RAWPORT" ]; then
+		run -t mangle -C FORWARD -s "$RAWNETWORK" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu || \
+			run -t mangle -A FORWARD -s "$RAWNETWORK" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+		run -t mangle -C FORWARD -d "$RAWNETWORK" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu || \
+			run -t mangle -A FORWARD -d "$RAWNETWORK" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 	fi
 else
 	# Keep the DTLS exception ahead of Keenetic's terminal INPUT rejects.
@@ -50,44 +63,68 @@ else
 	if [ -n "$RAWPORT" ]; then
 		while run -D INPUT -p udp --dport "$RAWPORT" -j ACCEPT; do :; done
 		run -I INPUT 1 -p udp --dport "$RAWPORT" -j ACCEPT
-		while run -D FORWARD -i wdttraw0 -j ACCEPT; do :; done
-		while run -D FORWARD -o wdttraw0 -j ACCEPT; do :; done
-		while run -D INPUT -i wdttraw0 -j ACCEPT; do :; done
-		run -I FORWARD 1 -i wdttraw0 -j ACCEPT
-		run -I FORWARD 1 -o wdttraw0 -j ACCEPT
-		run -I INPUT 1 -i wdttraw0 -j ACCEPT
 	fi
 	run -N QWDTT_PROFILE_FWD || true
 	run -N QWDTT_PROFILE_IN || true
-	run -F QWDTT_PROFILE_FWD
-	run -F QWDTT_PROFILE_IN
+	# Keep these chains intact: the qWDTT process owns UI-configured rules.
+	# NDMS may call this hook while clients are online, so flushing here would
+	# silently erase the configured firewall policy.
 	run -C FORWARD -i wdtt0 -j QWDTT_PROFILE_FWD || run -I FORWARD 1 -i wdtt0 -j QWDTT_PROFILE_FWD
 	run -C INPUT -i wdtt0 -j QWDTT_PROFILE_IN || run -I INPUT 1 -i wdtt0 -j QWDTT_PROFILE_IN
 	INTERNET_IPS=$(awk '
 		/"clientIP"/ {
 			if (match($0, /[0-9][0-9.]*/)) ip=substr($0,RSTART,RLENGTH)
 		}
+		/"rawIP"/ {
+			if (match($0, /[0-9][0-9.]*/)) raw=substr($0,RSTART,RLENGTH)
+		}
 		/"accessMode"[[:space:]]*:[[:space:]]*"internet"/ {
-			if (ip != "") print ip
-			ip=""
+			if (ip != "") print ip ":" raw
+			ip=""; raw=""
 		}
 	' "$CFG")
-	for IP in $INTERNET_IPS; do
+	for PAIR in $INTERNET_IPS; do
+		IP=${PAIR%%:*}
+		RAWIP=${PAIR#*:}
 		# Keenetic can DNAT public DNS to its local resolver before filtering.
 		# Permit DNS only; the router UI and all other LAN services stay closed.
-		run -A QWDTT_PROFILE_FWD -s "$IP/32" -p udp --dport 53 -j ACCEPT
-		run -A QWDTT_PROFILE_FWD -s "$IP/32" -p tcp --dport 53 -j ACCEPT
-		run -A QWDTT_PROFILE_IN -s "$IP/32" -p udp --dport 53 -j ACCEPT
-		run -A QWDTT_PROFILE_IN -s "$IP/32" -p tcp --dport 53 -j ACCEPT
+		run -C QWDTT_PROFILE_FWD -s "$IP/32" -p udp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_FWD -s "$IP/32" -p udp --dport 53 -j ACCEPT
+		run -C QWDTT_PROFILE_FWD -s "$IP/32" -p tcp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_FWD -s "$IP/32" -p tcp --dport 53 -j ACCEPT
+		run -C QWDTT_PROFILE_IN -s "$IP/32" -p udp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_IN -s "$IP/32" -p udp --dport 53 -j ACCEPT
+		run -C QWDTT_PROFILE_IN -s "$IP/32" -p tcp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_IN -s "$IP/32" -p tcp --dport 53 -j ACCEPT
+		if [ -n "$RAWIP" ]; then
+			run -C QWDTT_PROFILE_FWD -s "$RAWIP/32" -p udp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_FWD -s "$RAWIP/32" -p udp --dport 53 -j ACCEPT
+			run -C QWDTT_PROFILE_FWD -s "$RAWIP/32" -p tcp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_FWD -s "$RAWIP/32" -p tcp --dport 53 -j ACCEPT
+			run -C QWDTT_PROFILE_IN -s "$RAWIP/32" -p udp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_IN -s "$RAWIP/32" -p udp --dport 53 -j ACCEPT
+			run -C QWDTT_PROFILE_IN -s "$RAWIP/32" -p tcp --dport 53 -j ACCEPT || run -A QWDTT_PROFILE_IN -s "$RAWIP/32" -p tcp --dport 53 -j ACCEPT
+		fi
 		for NET in 172.16.0.0/12 192.168.0.0/16; do
-			run -A QWDTT_PROFILE_FWD -s "$IP/32" -d "$NET" -j REJECT
-			run -A QWDTT_PROFILE_IN -s "$IP/32" -d "$NET" -j REJECT
+			run -C QWDTT_PROFILE_FWD -s "$IP/32" -d "$NET" -j REJECT || run -A QWDTT_PROFILE_FWD -s "$IP/32" -d "$NET" -j REJECT
+			run -C QWDTT_PROFILE_IN -s "$IP/32" -d "$NET" -j REJECT || run -A QWDTT_PROFILE_IN -s "$IP/32" -d "$NET" -j REJECT
+			if [ -n "$RAWIP" ]; then
+				run -C QWDTT_PROFILE_FWD -s "$RAWIP/32" -d "$NET" -j REJECT || run -A QWDTT_PROFILE_FWD -s "$RAWIP/32" -d "$NET" -j REJECT
+				run -C QWDTT_PROFILE_IN -s "$RAWIP/32" -d "$NET" -j REJECT || run -A QWDTT_PROFILE_IN -s "$RAWIP/32" -d "$NET" -j REJECT
+			fi
 		done
 	done
-	run -A QWDTT_PROFILE_FWD -j RETURN
-	run -A QWDTT_PROFILE_IN -j RETURN
+	run -C QWDTT_PROFILE_FWD -j RETURN || run -A QWDTT_PROFILE_FWD -j RETURN
+	run -C QWDTT_PROFILE_IN -j RETURN || run -A QWDTT_PROFILE_IN -j RETURN
 	run -C FORWARD -i wdtt0 -j ACCEPT || run -A FORWARD -i wdtt0 -j ACCEPT
 	run -C FORWARD -o wdtt0 -j ACCEPT || run -A FORWARD -o wdtt0 -j ACCEPT
 	run -C INPUT -i wdtt0 -j ACCEPT || run -A INPUT -i wdtt0 -j ACCEPT
+	if [ -n "$RAWPORT" ]; then
+		while run -D FORWARD -i wdttraw0 -j QWDTT_PROFILE_FWD; do :; done
+		while run -D FORWARD -o wdttraw0 -j QWDTT_PROFILE_FWD; do :; done
+		while run -D INPUT -i wdttraw0 -j QWDTT_PROFILE_IN; do :; done
+		while run -D FORWARD -i wdttraw0 -j ACCEPT; do :; done
+		while run -D FORWARD -o wdttraw0 -j ACCEPT; do :; done
+		while run -D INPUT -i wdttraw0 -j ACCEPT; do :; done
+		run -I FORWARD 1 -i wdttraw0 -j QWDTT_PROFILE_FWD
+		run -I FORWARD 1 -o wdttraw0 -j QWDTT_PROFILE_FWD
+		run -I INPUT 1 -i wdttraw0 -j QWDTT_PROFILE_IN
+		run -I FORWARD 2 -i wdttraw0 -j ACCEPT
+		run -I FORWARD 2 -o wdttraw0 -j ACCEPT
+		run -I INPUT 2 -i wdttraw0 -j ACCEPT
+	fi
 fi
 exit 0

@@ -23,7 +23,7 @@ const (
 	// of Accept. The official client sends a keepalive every 25 seconds, so 90
 	// seconds tolerates several missed keepalives while releasing dead endpoints
 	// quickly enough for reconnects to recover without restarting the server.
-	dtlsIdleTimeout        = 90 * time.Second
+	dtlsIdleTimeout        = 30 * time.Second
 	connectionSetupTimeout = 90 * time.Second
 	readyPacketTimeout     = 90 * time.Second
 )
@@ -167,6 +167,9 @@ func (s Service) startServer(ctx context.Context) error {
 				s.Logs.Add("ERROR", "raw mode disabled: %v", rawErr)
 			} else {
 				defer cleanupRaw()
+				if e := EnsureGlobalFirewallPoliciesWithRaw(ctx, wg.Runner, s.Config.Server.Profiles, s.Config.Firewall); e != nil {
+					s.Logs.Add("ERROR", "RAW profile firewall policy failed: %v", e)
+				}
 				if e := EnsureDTLSWAN(ctx, wg.Runner, s.Config.Routing.WAN, s.Config.Server.RawPort); e != nil {
 					s.Logs.Add("ERROR", "raw firewall rule failed: %v", e)
 				} else {

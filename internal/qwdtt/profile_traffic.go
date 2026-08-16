@@ -45,7 +45,7 @@ type ProfileTrafficSnapshot struct {
 // Official qWDTT clients send a DTLS keepalive every 15 seconds. TURN may
 // swallow the close notification when a client disconnects, so the number of
 // still-running server goroutines alone is not a reliable online indicator.
-const profileOnlineWindow = 30 * time.Second
+const profileOnlineWindow = 20 * time.Second
 
 func NewProfileTrafficTracker() *ProfileTrafficTracker {
 	return &ProfileTrafficTracker{profiles: make(map[string]*ProfileTraffic)}
@@ -86,6 +86,22 @@ func (t *ProfileTrafficTracker) Disconnect(session *ProfileSession) {
 	session.traffic.sessionsMu.Lock()
 	delete(session.traffic.sessions, session)
 	session.traffic.sessionsMu.Unlock()
+}
+
+// ResetSessions is used during a full transport restart. The old transport
+// has already been stopped, so none of its sessions should remain visible in
+// the control panel while the replacement is starting.
+func (t *ProfileTrafficTracker) ResetSessions() {
+	if t == nil {
+		return
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, traffic := range t.profiles {
+		traffic.sessionsMu.Lock()
+		traffic.sessions = make(map[*ProfileSession]struct{})
+		traffic.sessionsMu.Unlock()
+	}
 }
 
 func (t *ProfileTrafficTracker) Snapshot() map[string]ProfileTrafficSnapshot {

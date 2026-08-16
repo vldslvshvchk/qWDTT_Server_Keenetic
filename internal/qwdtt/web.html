@@ -1500,13 +1500,13 @@ function formConfig(){
   };
 }
 function readFirewallRules(container){
-  return [...(container?.querySelectorAll(".firewall-rule")||[])].map((rule,index)=>({id:rule.dataset.ruleId||`rule-${index+1}`,name:rule.querySelector(".firewall-rule-name")?.value.trim()||`Правило ${index+1}`,enabled:rule.querySelector(".firewall-rule-enabled")?.checked!==false,action:rule.querySelector(".firewall-rule-action").value,protocol:rule.querySelector(".firewall-rule-protocol").value,sourceAddresses:rule.querySelector(".firewall-rule-sources")?.value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)||[],addresses:rule.querySelector(".firewall-rule-addresses").value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean),ports:rule.querySelector(".firewall-rule-ports").value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)}));
+  return [...(container?.querySelectorAll(".firewall-rule")||[])].filter(rule=>rule.dataset.builtin!=="true").map((rule,index)=>({id:rule.dataset.ruleId||`rule-${index+1}`,name:rule.querySelector(".firewall-rule-name")?.value.trim()||`Правило ${index+1}`,enabled:rule.querySelector(".firewall-rule-enabled")?.checked!==false,action:rule.querySelector(".firewall-rule-action").value,protocol:rule.querySelector(".firewall-rule-protocol").value,sourceAddresses:rule.querySelector(".firewall-rule-sources")?.value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)||[],addresses:rule.querySelector(".firewall-rule-addresses").value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean),ports:rule.querySelector(".firewall-rule-ports").value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)}));
 }
 function readProfiles(){
   return [...document.querySelectorAll(".profile-editor")].map(card=>{
     const hashes=normalizeVKHashes(card.querySelector(".profile-hash").value);
     return {id:card.dataset.id,name:card.querySelector(".profile-name").value.trim(),enabled:card.querySelector(".profile-enabled").checked,
-      clientIP:card.dataset.clientIp,vkHash:hashes[0]||"",vkHashes:hashes,workers:+card.querySelector(".profile-workers").value||9,dtlsPort:+$("listenAddr").value,accessMode:"all",
+      clientIP:card.dataset.clientIp,rawIP:card.dataset.rawIp||"",vkHash:hashes[0]||"",vkHashes:hashes,workers:+card.querySelector(".profile-workers").value||9,dtlsPort:+$("listenAddr").value,accessMode:"all",
       firewall:{}}
   });
 }
@@ -1517,7 +1517,9 @@ function firewallEditor(profile,index){
   return `<div class="profile-firewall"><div class="firewall-rules">${legacy.length?legacy.map(ruleEditor).join(""):'<div class="empty firewall-empty">Правил пока нет — создайте первое</div>'}</div><button class="btn small secondary firewall-rule-add" type="button">+ Добавить правило</button></div>`;
 }
 function renderGlobalFirewall(firewall){
+  const builtin={builtin:true,id:"qwdtt-dns-base",name:"Базовое правило DNS для туннелей",action:"allow",protocol:"ipv4",addresses:["172.16.0.0/12","192.168.0.0/16"],ports:["53"]};firewall={...firewall,rules:[builtin,...(firewall.rules||[])]};
   const box=$("globalFirewallEditor");if(!box)return;box.innerHTML=firewallEditor({firewall},0);box.querySelectorAll(".firewall-rule").forEach((rule,index)=>{rule.draggable=true;rule.querySelectorAll(".firewall-rule-up,.firewall-rule-down").forEach(button=>button.remove());const data=firewall.rules?.[index]||{},name=rule.querySelector(".firewall-rule-top b"),nameInput=document.createElement("input");nameInput.className="firewall-rule-name";nameInput.placeholder=`Правило ${index+1}`;nameInput.value=data.name||`Правило ${index+1}`;if(name)name.replaceWith(nameInput);const protocol=rule.querySelector(".firewall-rule-protocol"),current=protocol.value;protocol.innerHTML='<option value="ipv4">IPv4</option><option value="tcp">TCP</option><option value="udp">UDP</option>';protocol.value=current==="all"||!current?"ipv4":current;const sourceField=document.createElement("div");sourceField.className="field";sourceField.innerHTML='<label>Адрес источника / подсети</label><input class="firewall-rule-sources" placeholder="10.66.66.2, 10.66.66.3, 192.168.1.0/24" value="'+escapeHTML((data.sourceAddresses||[]).join(", "))+'">';const destination=rule.querySelector(".firewall-rule-addresses"),destinationField=destination?.closest(".field");if(destination&&destinationField){const input=document.createElement("input");input.className="firewall-rule-addresses";input.placeholder="192.168.1.1, 192.168.1.0/24";input.value=destination.value.replace(/[\n]+/g,", ");destination.replaceWith(input);destinationField.querySelector("label")?.replaceChildren("Адрес назначения / подсети")};rule.querySelector(".profile-firewall-grid")?.prepend(sourceField)});
+  const builtinRule=box.querySelector('.firewall-rule');if(builtinRule){builtinRule.dataset.builtin="true";builtinRule.querySelectorAll('input,select,textarea,button').forEach(control=>{control.disabled=true;control.tabIndex=-1});builtinRule.querySelector('.firewall-rule-actions')?.replaceChildren();builtinRule.querySelector('.firewall-rule-top b')?.replaceWith(Object.assign(document.createElement('b'),{textContent:'Базовое правило DNS для туннелей'}));}
 }
 function updateFirewallSummary(firewall){
   const summary=$("firewallSummary"),rules=firewall?.rules||[];if(!summary)return;
@@ -1528,6 +1530,8 @@ function layoutFirewallRuleNames(){
   document.querySelectorAll("#globalFirewallEditor .firewall-rule").forEach(rule=>{const name=rule.querySelector(".firewall-rule-name"),grid=rule.querySelector(".profile-firewall-grid");if(!name||!grid||grid.contains(name))return;const field=document.createElement("div");field.className="field firewall-rule-name-field";field.innerHTML="<label>Имя</label>";field.append(name);grid.prepend(field)});
 }
 function enhanceFirewallRuleControls(firewall){
+  document.querySelectorAll("#globalFirewallEditor .firewall-rule[data-builtin=\"true\"]").forEach(rule=>{rule.style.display="none"});
+  document.querySelectorAll("#globalFirewallEditor .firewall-rule[data-builtin=\"true\"]").forEach(rule=>{rule.querySelectorAll("input,select,textarea,button").forEach(control=>{control.disabled=true;control.tabIndex=-1});});setTimeout(()=>document.querySelectorAll("#globalFirewallEditor .firewall-rule[data-builtin=\"true\"] input, #globalFirewallEditor .firewall-rule[data-builtin=\"true\"] select, #globalFirewallEditor .firewall-rule[data-builtin=\"true\"] textarea, #globalFirewallEditor .firewall-rule[data-builtin=\"true\"] button").forEach(control=>{control.disabled=true;control.tabIndex=-1}),0);
   document.querySelectorAll("#globalFirewallEditor .firewall-rule").forEach((rule,index)=>{const data=firewall.rules?.[index]||{};rule.dataset.ruleId=data.id||`rule-${Date.now().toString(36)}-${index+1}`;rule.draggable=false;const top=rule.querySelector(".firewall-rule-top"),handle=document.createElement("span");handle.className="firewall-rule-handle";handle.draggable=true;handle.innerHTML='<span>☷</span><span class="rule-priority">Приоритет '+(index+1)+'</span>';top?.prepend(handle);const enabledField=document.createElement("div");enabledField.className="field firewall-rule-enabled-field";enabledField.innerHTML='<label class="switch"><input class="firewall-rule-enabled" type="checkbox" '+(data.enabled===false?"":"checked")+'><span></span></label>';rule.querySelector(".profile-firewall-grid")?.prepend(enabledField)});
 }
 function setupFirewallFooter(){
@@ -1559,7 +1563,7 @@ function renderProfileEditors(){
   updateProfilesSummary();
   if(!profiles.length){box.innerHTML='<div class="empty">Профилей пока нет — создайте первый</div>';return}
   box.innerHTML=profiles.map((profile,index)=>{const hashes=profileHashValues(profile),workers=profileWorkers(profile),max=Math.max(9,hashes.length*27);return `
-    <div class="profile-editor" data-id="${escapeHTML(profile.id)}" data-client-ip="${escapeHTML(profile.clientIP)}" data-traffic-profile="${escapeHTML(profile.id)}">
+    <div class="profile-editor" data-id="${escapeHTML(profile.id)}" data-client-ip="${escapeHTML(profile.clientIP)}" data-raw-ip="${escapeHTML(profile.rawIP||"")}" data-traffic-profile="${escapeHTML(profile.id)}">
       <div class="profile-editor-head">
         <div class="profile-summary">
           <span class="profile-badge profile-status ${profile.enabled?"enabled":""}" title="${profile.enabled?"Профиль включён":"Профиль выключен"}" aria-label="${profile.enabled?"Профиль включён":"Профиль выключен"}"><svg class="status-on" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"></circle><path d="m6.7 10.1 2.1 2.2 4.6-4.7"></path></svg><svg class="status-off" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"></circle><path d="m7.5 7.5 5 5m0-5-5 5"></path></svg></span>
@@ -1604,7 +1608,7 @@ function renderProfileEditors(){
 function addProfile(){
   openProfilesCard();
   if(document.querySelector(".profile-editor"))profiles=readProfiles();
-   profiles.push({id:"profile-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),name:"Новый профиль",enabled:true,clientIP:"",vkHash:"",vkHashes:[],workers:9,dtlsPort:+$("listenAddr").value||56000,accessMode:"all",firewall:{rules:[]}});
+  profiles.push({id:"profile-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7),name:"Новый профиль",enabled:true,clientIP:"",rawIP:"",vkHash:"",vkHashes:[],workers:9,dtlsPort:+$("listenAddr").value||56000,accessMode:"all",firewall:{rules:[]}});
   renderProfileEditors();setDirty(true);
   const card=$("profileEditors").lastElementChild,edit=card?.querySelector(".edit-profile");
    if(card&&edit){card.classList.add("editing");edit.classList.add("active");edit.textContent="Скрыть";edit.setAttribute("aria-expanded","true");syncWorkerKnob(card);card.querySelector(".profile-name")?.focus()}

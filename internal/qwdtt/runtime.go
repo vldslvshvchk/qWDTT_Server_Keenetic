@@ -95,7 +95,7 @@ func (r *Runtime) Update(cfg Config) error {
 		if cfg.Enabled {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := EnsureGlobalFirewallPolicies(ctx, OSRunner{}, cfg.Server.Profiles, cfg.Firewall); err != nil {
+			if err := EnsureGlobalFirewallPoliciesWithRaw(ctx, OSRunner{}, cfg.Server.Profiles, cfg.Firewall); err != nil {
 				return fmt.Errorf("apply profile policies without restart: %w", err)
 			}
 		}
@@ -168,6 +168,10 @@ func (r *Runtime) reconcile() error {
 			return fmt.Errorf("transport restart timed out waiting for the previous instance")
 		}
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cleanupManagedInterfaces(cleanupCtx)
+	cleanupCancel()
+	r.profileTraffic.ResetSessions()
 	if !cfg.Enabled {
 		return nil
 	}
@@ -225,6 +229,14 @@ func (r *Runtime) reconcile() error {
 		r.mu.Unlock()
 	}()
 	return nil
+}
+
+func cleanupManagedInterfaces(ctx context.Context) {
+	runner := OSRunner{}
+	// These names are owned by qWDTT. Removing them after a stop guarantees
+	// that the next start cannot inherit stale WireGuard/TUN state.
+	_ = runner.Run(ctx, "ip", "link", "del", "wdtt0")
+	_ = runner.Run(ctx, "ip", "link", "del", "wdttraw0")
 }
 
 func (r *Runtime) Toggle(enabled bool) error {
