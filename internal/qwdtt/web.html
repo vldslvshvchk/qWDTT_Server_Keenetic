@@ -89,7 +89,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#7
 .profile-editors{display:grid;gap:9px}.profile-editor{padding:11px;border:1px solid var(--line-soft);border-radius:12px;background:linear-gradient(135deg,rgba(12,18,32,.88),rgba(8,13,24,.62))}
 .profile-editors>.empty{min-height:64px}
 .profile-editor-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:0}.profile-editor-title{display:flex;align-items:center;gap:8px;min-width:0;font-weight:750}.profile-name-title{overflow:hidden;width:170px;flex:none;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.profile-head-right{display:flex;align-items:center;justify-content:flex-end;gap:9px;min-width:0;margin-left:auto}.profile-head-metrics{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:7px}
-.profile-editor-grid{display:grid;grid-template-columns:58px minmax(105px,.2fr) minmax(260px,.8fr);gap:9px}.profile-actions{display:flex;align-items:center;gap:7px}.profile-port{width:98px;justify-content:center;overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis}
+.profile-editor-grid{display:grid;grid-template-columns:58px minmax(105px,.2fr) minmax(260px,.8fr);gap:9px}.profile-actions{display:flex;align-items:center;gap:7px}.profile-port{width:220px;min-width:220px;justify-content:center;overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis}
 .profile-summary{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-width:0;padding-left:6px}.profile-badge{display:inline-flex;align-items:center;gap:5px;min-height:23px;padding:3px 7px;border:1px solid var(--line-soft);border-radius:7px;background:rgba(18,27,44,.72);color:#aab7cd;font-size:9px;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}.profile-status{width:30px;justify-content:center;color:#77849a;transition:.2s}.profile-status svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.profile-status .status-on{display:none}.profile-status.enabled{border-color:rgba(67,214,140,.26);background:rgba(67,214,140,.08);color:var(--green);box-shadow:inset 0 0 8px rgba(67,214,140,.06)}.profile-status.enabled .status-on{display:block}.profile-status.enabled .status-off{display:none}.profile-online{width:64px;justify-content:center;color:#77849a}.profile-online.connected{border-color:rgba(67,214,140,.26);background:rgba(67,214,140,.08);color:var(--green)}.profile-sessions{width:66px;justify-content:center;overflow:hidden;color:#b8aefe;text-overflow:ellipsis}.profile-traffic-group{display:inline-flex;align-items:center;width:261px;min-height:23px;overflow:hidden;border:1px solid var(--line-soft);border-radius:7px;background:rgba(18,27,44,.72);font-size:9px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}.profile-traffic-group span{box-sizing:border-box;overflow:hidden;padding:3px 6px;text-align:center;text-overflow:ellipsis}.profile-traffic-group .profile-stat{width:78px}.profile-traffic-group .profile-total{width:102px}.profile-traffic-group span+span{border-left:1px solid var(--line-soft)}.profile-stat.down{color:#60c9ff}.profile-stat.up{color:#aa92ff}.profile-total{color:#9aa8bf}
 .profile-edit-panel{display:none;margin-top:9px;padding-top:9px;border-top:1px solid var(--line-soft)}.profile-editor.editing .profile-edit-panel{display:block;animation:enter .18s ease}.profile-footer{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}.profile-footer .btn{min-height:28px;padding:5px 9px;font-size:9px}.edit-profile.active{border-color:rgba(124,108,255,.35);background:rgba(124,108,255,.12);color:#d7d2ff}
 .profile-enabled-field{display:flex;align-items:center;justify-content:center;padding-top:13px}.profile-enabled-field .switch{margin:0}
@@ -897,7 +897,7 @@ select{background-position:calc(100% - 13px) 13px,calc(100% - 8px) 13px}
 .profile-head-metrics .profile-online{width:92px}
 .profile-head-metrics .profile-mode{width:58px;justify-content:center;color:#9aa8bf}
 .profile-head-metrics .profile-mode.connected{border-color:rgba(104,183,255,.26);background:rgba(104,183,255,.08);color:#68b7ff}
-.profile-head-metrics .profile-port{width:112px}
+.profile-head-metrics .profile-port{width:220px;min-width:220px}
 .profile-head-metrics .profile-traffic-group{width:290px}
 .profile-head-metrics .profile-traffic-group .profile-stat{width:88px}
 .profile-head-metrics .profile-traffic-group .profile-total{width:114px}
@@ -1452,7 +1452,7 @@ function renderState(state,fillForm=false){
     setValue("publicHost",s.publicHost);setValue("listenAddr",portOnly(s.listenAddr)||s.dtlsPort||56000);
     setValue("wgPort",s.wgPort||56001);setValue("rawPort",s.rawPort||56003);setValue("vpnPort",s.vpnPort||9000);setValue("password",s.password);
     setValue("interface",r.interface||"wdtt0");
-    profiles=(s.profiles||[]).map(profile=>({...profile}));globalFirewall=c.firewall||{rules:[]};renderProfileEditors();updateProfilesSummary();renderGlobalFirewall(globalFirewall);updateFirewallSummary(globalFirewall);enhanceFirewallRuleControls(globalFirewall);layoutFirewallRuleNames();setupFirewallFooter();
+   profiles=(s.profiles||[]).map(profile=>({...profile}));globalFirewall=c.firewall||{rules:[]};renderProfileEditors();updateProfilesSummary();renderGlobalFirewall(globalFirewall);updateFirewallSummary(globalFirewall);enhanceFirewallRuleControls({...globalFirewall,rules:[{},...(globalFirewall.rules||[])]});layoutFirewallRuleNames();setupFirewallFooter();
   }
   updateProfileTelemetry(state.profileTraffic||{});
 }
@@ -1530,11 +1530,13 @@ function layoutFirewallRuleNames(){
   document.querySelectorAll("#globalFirewallEditor .firewall-rule").forEach(rule=>{const name=rule.querySelector(".firewall-rule-name"),grid=rule.querySelector(".profile-firewall-grid");if(!name||!grid||grid.contains(name))return;const field=document.createElement("div");field.className="field firewall-rule-name-field";field.innerHTML="<label>Имя</label>";field.append(name);grid.prepend(field)});
 }
 function enhanceFirewallRuleControls(firewall){
+  if((firewall.rules||[]).length!==document.querySelectorAll("#globalFirewallEditor .firewall-rule").length)firewall={...firewall,rules:[{},...(firewall.rules||[])]};
   document.querySelectorAll("#globalFirewallEditor .firewall-rule[data-builtin=\"true\"]").forEach(rule=>{rule.style.display="none"});
   document.querySelectorAll("#globalFirewallEditor .firewall-rule[data-builtin=\"true\"]").forEach(rule=>{rule.querySelectorAll("input,select,textarea,button").forEach(control=>{control.disabled=true;control.tabIndex=-1});});setTimeout(()=>document.querySelectorAll("#globalFirewallEditor .firewall-rule[data-builtin=\"true\"] input, #globalFirewallEditor .firewall-rule[data-builtin=\"true\"] select, #globalFirewallEditor .firewall-rule[data-builtin=\"true\"] textarea, #globalFirewallEditor .firewall-rule[data-builtin=\"true\"] button").forEach(control=>{control.disabled=true;control.tabIndex=-1}),0);
   document.querySelectorAll("#globalFirewallEditor .firewall-rule").forEach((rule,index)=>{const data=firewall.rules?.[index]||{};rule.dataset.ruleId=data.id||`rule-${Date.now().toString(36)}-${index+1}`;rule.draggable=false;const top=rule.querySelector(".firewall-rule-top"),handle=document.createElement("span");handle.className="firewall-rule-handle";handle.draggable=true;handle.innerHTML='<span>☷</span><span class="rule-priority">Приоритет '+(index+1)+'</span>';top?.prepend(handle);const enabledField=document.createElement("div");enabledField.className="field firewall-rule-enabled-field";enabledField.innerHTML='<label class="switch"><input class="firewall-rule-enabled" type="checkbox" '+(data.enabled===false?"":"checked")+'><span></span></label>';rule.querySelector(".profile-firewall-grid")?.prepend(enabledField)});
-}
-function setupFirewallFooter(){
+  document.querySelectorAll("#globalFirewallEditor .firewall-rule:not([data-builtin=\"true\"])").forEach((rule,index)=>{const priority=rule.querySelector(".rule-priority");if(priority)priority.textContent="Приоритет "+(index+1)});
+ }
+ function setupFirewallFooter(){
   const box=$("globalFirewallEditor"),add=box?.querySelector(".firewall-rule-add");if(!box||!add)return;const footer=document.createElement("div");footer.className="firewall-footer";const save=document.createElement("button");save.className="btn small";save.type="button";save.textContent="Сохранить firewall";save.onclick=event=>saveConfig(event,save);footer.append(add,save);box.append(footer);
 }
 function setupFirewallCollapse(){
@@ -1585,6 +1587,7 @@ function renderProfileEditors(){
         </div>
       </div>
     </div>`}).join("");
+  document.querySelectorAll(".profile-editor").forEach(card=>{const profile=profiles.find(item=>item.id===card.dataset.id),address=card.querySelector(".profile-port");if(profile&&address)address.textContent=`WG: ${profile.clientIP||"—"} · RAW: ${profile.rawIP||"—"}`});
   updateProfileTelemetry(appState?.profileTraffic||{});
   updateProfilesSummary();
   document.querySelectorAll(".profile-editor").forEach(syncWorkerKnob);
@@ -1727,7 +1730,7 @@ $("profileEditors").addEventListener("input",event=>{
 $("globalFirewallEditor").addEventListener("click",event=>{
   const action=event.target.closest(".firewall-rule-add,.firewall-rule-remove,.firewall-rule-up,.firewall-rule-down");if(!action)return;
   globalFirewall={rules:readFirewallRules($("globalFirewallEditor"))};globalFirewall.rules=globalFirewall.rules||[];
-  const row=action.closest(".firewall-rule"),index=row?Number(row.dataset.ruleIndex):-1;
+   const row=action.closest(".firewall-rule"),index=row?Number(row.dataset.ruleIndex)-1:-1;
   if(action.classList.contains("firewall-rule-add"))globalFirewall.rules.push({name:`Правило ${globalFirewall.rules.length+1}`,action:"allow",family:"ipv4",protocol:"ipv4",addresses:[],ports:[]});
   if(action.classList.contains("firewall-rule-remove")&&index>=0)globalFirewall.rules.splice(index,1);
   if(action.classList.contains("firewall-rule-up")&&index>0)[globalFirewall.rules[index-1],globalFirewall.rules[index]]=[globalFirewall.rules[index],globalFirewall.rules[index-1]];
@@ -1735,10 +1738,10 @@ $("globalFirewallEditor").addEventListener("click",event=>{
   renderGlobalFirewall(globalFirewall);updateFirewallSummary(globalFirewall);enhanceFirewallRuleControls(globalFirewall);layoutFirewallRuleNames();setupFirewallFooter();setDirty(true);
 });
 let draggedFirewallIndex=-1;
-$("globalFirewallEditor").addEventListener("dragstart",event=>{if(event.target.closest("input,textarea,select,button,[contenteditable=\"true\"]")){event.preventDefault();return}const rule=event.target.closest(".firewall-rule");if(!rule)return;draggedFirewallIndex=Number(rule.dataset.ruleIndex);rule.classList.add("dragging");event.dataTransfer?.setData("text/plain",String(draggedFirewallIndex));});
+ $("globalFirewallEditor").addEventListener("dragstart",event=>{if(event.target.closest("input,textarea,select,button,[contenteditable=\"true\"]")){event.preventDefault();return}const rule=event.target.closest(".firewall-rule");if(!rule)return;draggedFirewallIndex=Number(rule.dataset.ruleIndex)-1;rule.classList.add("dragging");event.dataTransfer?.setData("text/plain",String(draggedFirewallIndex));});
 $("globalFirewallEditor").addEventListener("dragover",event=>{const rule=event.target.closest(".firewall-rule");if(!rule)return;event.preventDefault();document.querySelectorAll(".firewall-rule.drag-over").forEach(item=>item.classList.remove("drag-over"));rule.classList.add("drag-over");});
 $("globalFirewallEditor").addEventListener("dragend",event=>{event.target.closest(".firewall-rule")?.classList.remove("dragging");document.querySelectorAll(".firewall-rule.drag-over").forEach(item=>item.classList.remove("drag-over"));draggedFirewallIndex=-1;});
-$("globalFirewallEditor").addEventListener("drop",event=>{const target=event.target.closest(".firewall-rule");if(!target||draggedFirewallIndex<0)return;event.preventDefault();const targetIndex=Number(target.dataset.ruleIndex);globalFirewall={rules:readFirewallRules($("globalFirewallEditor"))};const [moved]=globalFirewall.rules.splice(draggedFirewallIndex,1);globalFirewall.rules.splice(targetIndex,0,moved);renderGlobalFirewall(globalFirewall);updateFirewallSummary(globalFirewall);enhanceFirewallRuleControls(globalFirewall);layoutFirewallRuleNames();setupFirewallFooter();setDirty(true);draggedFirewallIndex=-1;});
+ $("globalFirewallEditor").addEventListener("drop",event=>{const target=event.target.closest(".firewall-rule");if(!target||draggedFirewallIndex<0)return;event.preventDefault();const targetIndex=Number(target.dataset.ruleIndex)-1;globalFirewall={rules:readFirewallRules($("globalFirewallEditor"))};const [moved]=globalFirewall.rules.splice(draggedFirewallIndex,1);globalFirewall.rules.splice(targetIndex,0,moved);renderGlobalFirewall(globalFirewall);updateFirewallSummary(globalFirewall);enhanceFirewallRuleControls(globalFirewall);layoutFirewallRuleNames();setupFirewallFooter();setDirty(true);draggedFirewallIndex=-1;});
 $("globalFirewallEditor").addEventListener("change",event=>{if(!event.target.classList.contains("firewall-rule-enabled")&&!event.target.classList.contains("firewall-rule-action"))return;globalFirewall={rules:readFirewallRules($("globalFirewallEditor"))};updateFirewallSummary(globalFirewall);setDirty(true);});
 $("profileEditors").addEventListener("click",event=>{const connect=event.target.closest(".profile-connect");if(connect)openQR(connect.dataset.profileId)});
 document.querySelectorAll("#configForm input,#configForm select").forEach(el=>["input","change"].forEach(type=>el.addEventListener(type,()=>setDirty(true))));
