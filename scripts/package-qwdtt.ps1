@@ -71,13 +71,18 @@ if ! "$INIT" start; then
 fi
 WEB_PORT=$(sed -n 's/.*"webListen"[[:space:]]*:[[:space:]]*"[^:]*:\([0-9][0-9]*\)".*/\1/p' /opt/etc/qwdtt/config.json | head -n 1)
 DTLS_PORT=$(sed -n 's/.*"dtlsPort"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' /opt/etc/qwdtt/config.json | awk '$1 + 0 > 0 { print; exit }')
+WG_PORT=$(sed -n 's/.*"wgPort"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' /opt/etc/qwdtt/config.json | awk '$1 + 0 > 0 { print; exit }')
+RAW_PORT=$(sed -n 's/.*"rawPort"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' /opt/etc/qwdtt/config.json | awk '$1 + 0 > 0 { print; exit }')
 [ -n "$WEB_PORT" ] || WEB_PORT=3333
 [ -n "$DTLS_PORT" ] || DTLS_PORT=56000
+[ -n "$WG_PORT" ] || WG_PORT=56001
 LAN_IP=$(ip -4 addr show br0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -n 1)
 [ -n "$LAN_IP" ] || LAN_IP=0.0.0.0
 echo "qWDTT started"
 echo "Web panel: http://$LAN_IP:$WEB_PORT"
 echo "DTLS: UDP $DTLS_PORT"
+[ -n "$WG_PORT" ] && echo "WireGuard: UDP $WG_PORT"
+[ -n "$RAW_PORT" ] && echo "RAW: UDP $RAW_PORT"
 exit 0
 '@
 	Write-Text (Join-Path $control "prerm") @'

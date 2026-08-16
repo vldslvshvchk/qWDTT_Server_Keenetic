@@ -96,6 +96,11 @@ func newRawRouter(ctx context.Context, runner CommandRunner, network, wan string
 	// Use the canonical network everywhere so the managed rule matches the
 	// route that the kernel installs for wdttraw0.
 	network = ipnet.String()
+	// Remove any stale TUN left by a previous process before creating the
+	// replacement. Flush the address first because some Keenetic builds keep
+	// it around briefly while the device is being torn down.
+	_ = runner.Run(ctx, "ip", "link", "set", "dev", rawInterface, "down")
+	_ = runner.Run(ctx, "ip", "addr", "flush", "dev", rawInterface)
 	_ = runner.Run(ctx, "ip", "link", "del", rawInterface)
 	f, err := createRawTUN(rawInterface)
 	if err != nil {
@@ -318,13 +323,13 @@ func rawGateway(network string) string {
 	return fmt.Sprintf("%d.%d.%d.%d", base[0], base[1], byte(66), byte(1))
 }
 
-func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, runner CommandRunner) error {
+func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, runner CommandRunner) (func(), error) {
 	if s.Config.Server.RawPort <= 0 {
-		return nil
+		return func() {}, nil
 	}
 	router, err := newRawRouter(ctx, runner, s.Config.Server.RawNetwork, s.Config.Routing.WAN, s.Config.Server.RawMTU)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	router.logs = s.Logs
 	router.traffic = s.Traffic
@@ -336,21 +341,41 @@ func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, run
 		key, e := DeriveWrapKey(s.Config.profilePassword(p))
 		if e != nil {
 			router.close()
-			return e
+			return nil, e
 		}
 		keys = append(keys, wrapIdentity{id: p.ID, key: key})
 		byID[p.ID] = p
 	}
-	listener, err := newWrappedListener(mustUDPAddr(addr), keys, s.Logs)
+	var listener *wrappedListener
+	// During a runtime restart the previous RAW listener can still be
+	// unwinding while the new transport is already being reconciled. Wait a
+	// little for that socket to close instead of disabling RAW permanently.
+	for attempt := 0; attempt < 20; attempt++ {
+		listener, err = newWrappedListener(mustUDPAddr(addr), keys, s.Logs)
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			router.close()
+			return func() {}, nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 	if err != nil {
 		router.close()
-		return err
+		return nil, err
 	}
 	s.Logs.Add("INFO", "RAW listener started on %s; WRAP profiles=%d", addr, len(keys))
+	var closeOnce sync.Once
+	cleanup := func() {
+		closeOnce.Do(func() {
+			_ = listener.Close()
+			router.close()
+		})
+	}
 	go func() {
 		<-ctx.Done()
-		_ = listener.Close()
-		router.close()
+		cleanup()
 	}()
 	// The classifier is normally driven by the DTLS listener on a shared
 	// port. For a separate -listen-raw port, drive it explicitly so rawCh
@@ -395,7 +420,7 @@ func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, run
 			}(pc, remote, first)
 		}
 	}()
-	return nil
+	return cleanup, nil
 }
 
 func mustUDPAddr(addr string) *net.UDPAddr { a, _ := net.ResolveUDPAddr("udp", addr); return a }

@@ -42,7 +42,11 @@ func (b WGBackend) Setup(ctx context.Context) error {
 	}
 	// A previous process may have left the interface and obsolete peers
 	// behind. Recreate this service-owned interface so peers and listen-port
-	// state cannot accumulate across restarts.
+	// state cannot accumulate across restarts. Some Keenetic builds keep the
+	// address attached briefly after the link deletion, so explicitly flush it
+	// before creating the replacement.
+	_ = b.Runner.Run(ctx, "ip", "link", "set", "dev", b.Interface, "down")
+	_ = b.Runner.Run(ctx, "ip", "addr", "flush", "dev", b.Interface)
 	_ = b.Runner.Run(ctx, "ip", "link", "del", b.Interface)
 	if err := b.Runner.Run(ctx, "ip", "link", "add", b.Interface, "type", "wireguard"); err != nil {
 		return err
@@ -50,10 +54,16 @@ func (b WGBackend) Setup(ctx context.Context) error {
 	if e := b.Runner.Run(ctx, "wg", "set", b.Interface, "private-key", b.ServerPrivate, "listen-port", fmt.Sprint(b.ListenPort)); e != nil {
 		return e
 	}
-	if e := b.Runner.Run(ctx, "ip", "addr", "replace", b.Address, "dev", b.Interface); e != nil {
+	// Bring up the empty device before assigning the tunnel address. Older
+	// Keenetic kernels can reject `ip link set up` with EADDRINUSE when the
+	// address is assigned while the WireGuard link is still down.
+	if e := b.Runner.Run(ctx, "ip", "link", "set", "dev", b.Interface, "up"); e != nil {
 		return e
 	}
-	return b.Runner.Run(ctx, "ip", "link", "set", "dev", b.Interface, "up")
+	if e := b.Runner.Run(ctx, "ip", "addr", "flush", "dev", b.Interface); e != nil {
+		return e
+	}
+	return b.Runner.Run(ctx, "ip", "addr", "replace", b.Address, "dev", b.Interface)
 }
 func (b WGBackend) AddPeer(ctx context.Context, pub, ip string) error {
 	return b.Runner.Run(ctx, "wg", "set", b.Interface, "peer", pub, "allowed-ips", ip+"/32", "persistent-keepalive", "25")

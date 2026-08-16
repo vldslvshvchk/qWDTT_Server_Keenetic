@@ -161,12 +161,18 @@ func (s Service) startServer(ctx context.Context) error {
 	if s.Config.Server.RawPort > 0 {
 		if s.Config.Server.RawPort == port {
 			s.Logs.Add("INFO", "raw mode configured for shared UDP port %d (clients select WG or RAW)", port)
-		} else if err := s.startRaw(ctx, enabled, wg.Runner); err != nil {
-			s.Logs.Add("ERROR", "raw mode disabled: %v", err)
-		} else if e := EnsureDTLSWAN(ctx, wg.Runner, s.Config.Routing.WAN, s.Config.Server.RawPort); e != nil {
-			s.Logs.Add("ERROR", "raw firewall rule failed: %v", e)
 		} else {
-			s.Logs.Add("INFO", "raw mode enabled: UDP %d", s.Config.Server.RawPort)
+			cleanupRaw, rawErr := s.startRaw(ctx, enabled, wg.Runner)
+			if rawErr != nil {
+				s.Logs.Add("ERROR", "raw mode disabled: %v", rawErr)
+			} else {
+				defer cleanupRaw()
+				if e := EnsureDTLSWAN(ctx, wg.Runner, s.Config.Routing.WAN, s.Config.Server.RawPort); e != nil {
+					s.Logs.Add("ERROR", "raw firewall rule failed: %v", e)
+				} else {
+					s.Logs.Add("INFO", "raw mode enabled: UDP %d", s.Config.Server.RawPort)
+				}
+			}
 		}
 	}
 	return s.serveProfiles(ctx, enabled)

@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "mode": "server",
   "dataDir": "/opt/etc/qwdtt",
   "webListen": "0.0.0.0:3333",

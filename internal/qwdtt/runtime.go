@@ -16,11 +16,13 @@ import (
 // the HTTP control panel remains available while the server is disabled.
 type Runtime struct {
 	mu             sync.Mutex
+	reconcileMu    sync.Mutex
 	cfg            *Config
 	path           string
 	logs           *LogBook
 	parent         context.Context
 	cancel         context.CancelFunc
+	done           chan struct{}
 	run            bool
 	gen            uint64
 	traffic        *TrafficStats
@@ -136,30 +138,54 @@ func transportRestartRequired(previous, next Config) bool {
 }
 
 func (r *Runtime) reconcile() error {
+	// Configuration writes can arrive concurrently from the panel and from
+	// client/update actions. Never let two transport restarts overlap: that
+	// would leave the previous RAW listener holding UDP 56003.
+	r.reconcileMu.Lock()
+	defer r.reconcileMu.Unlock()
+
 	r.mu.Lock()
+	oldDone := r.done
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil
 	}
+	r.done = nil
 	r.run = false
 	cfg := *r.cfg
 	parent := r.parent
 	logs := r.logs
+	r.mu.Unlock()
+
+	// A restart must not overlap two transport instances. In particular, the
+	// old RAW UDP listener may still own its port while its accept goroutines
+	// are unwinding. Starting the replacement before it exits causes a false
+	// "address already in use" and silently disables RAW.
+	if oldDone != nil {
+		select {
+		case <-oldDone:
+		case <-time.After(10 * time.Second):
+			return fmt.Errorf("transport restart timed out waiting for the previous instance")
+		}
+	}
 	if !cfg.Enabled {
-		r.mu.Unlock()
 		return nil
 	}
 	if parent == nil {
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	r.mu.Lock()
 	r.cancel = cancel
+	r.done = done
 	r.gen++
 	gen := r.gen
 	r.run = true
 	r.mu.Unlock()
 
 	go func() {
+		defer close(done)
 		backoff := time.Second
 		for {
 			err := (Service{
@@ -194,6 +220,7 @@ func (r *Runtime) reconcile() error {
 		if r.gen == gen {
 			r.run = false
 			r.cancel = nil
+			r.done = nil
 		}
 		r.mu.Unlock()
 	}()
