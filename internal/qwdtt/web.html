@@ -83,7 +83,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#7
 .service-inline-row{display:grid;grid-template-columns:max-content minmax(190px,.8fr) minmax(170px,.65fr) minmax(300px,1.35fr);align-items:end;gap:15px}
 .auth-toggle-control{display:flex;align-items:center;height:42px}
 .auth-toggle-control .switch{margin:0;transform:translateX(8px)}
-.server-ports-row{display:grid;grid-template-columns:repeat(3,minmax(125px,.7fr)) minmax(220px,1.3fr);gap:8px 9px}
+.server-ports-row{display:grid;grid-template-columns:repeat(4,minmax(105px,.7fr)) minmax(220px,1.3fr);gap:8px 9px}
 .form-actions{display:flex;align-items:center;gap:12px;margin-top:18px}.message{font-size:12px;color:var(--green)}.message.error{color:var(--red)}
 .info-note{display:flex;gap:10px;padding:12px;border:1px solid rgba(124,108,255,.16);border-radius:12px;background:rgba(124,108,255,.07);color:#aeb9d0;font-size:11px}.info-note svg{width:16px;flex:none;color:var(--primary-2)}
 .profile-editors{display:grid;gap:9px}.profile-editor{padding:11px;border:1px solid var(--line-soft);border-radius:12px;background:linear-gradient(135deg,rgba(12,18,32,.88),rgba(8,13,24,.62))}
@@ -894,7 +894,9 @@ select{background-position:calc(100% - 13px) 13px,calc(100% - 8px) 13px}
   font-size:10px;
 }
 .profile-head-metrics .profile-sessions{width:74px}
-.profile-head-metrics .profile-online{width:68px}
+.profile-head-metrics .profile-online{width:92px}
+.profile-head-metrics .profile-mode{width:58px;justify-content:center;color:#9aa8bf}
+.profile-head-metrics .profile-mode.connected{border-color:rgba(104,183,255,.26);background:rgba(104,183,255,.08);color:#68b7ff}
 .profile-head-metrics .profile-port{width:112px}
 .profile-head-metrics .profile-traffic-group{width:290px}
 .profile-head-metrics .profile-traffic-group .profile-stat{width:88px}
@@ -966,11 +968,12 @@ select{background-position:calc(100% - 13px) 13px,calc(100% - 8px) 13px}
     grid-column:1/-1;
     grid-row:2;
     display:grid;
-    grid-template-columns:62px 68px minmax(0,1fr);
+    grid-template-columns:62px 68px 68px minmax(0,1fr);
     width:100%;
     gap:4px
   }
   .profile-head-metrics .profile-online,
+  .profile-head-metrics .profile-mode,
   .profile-head-metrics .profile-sessions{
     width:100%;
     min-width:0
@@ -1257,7 +1260,8 @@ select{background-position:calc(100% - 13px) 13px,calc(100% - 8px) 13px}
             <div class="server-ports-row">
               <div class="field"><label for="listenAddr">DTLS-порт</label><div class="input-wrap"><input id="listenAddr" type="number" min="1" max="65535" required></div></div>
               <div class="field"><label for="vpnPort">Локальный VPN-порт</label><input id="vpnPort" type="number" min="1" max="65535" required></div>
-              <div class="field"><label for="wgPort">WireGuard-порт</label><div class="input-wrap"><input id="wgPort" type="number" min="1" max="65535" required></div></div>
+               <div class="field"><label for="wgPort">WireGuard-порт</label><div class="input-wrap"><input id="wgPort" type="number" min="1" max="65535" required></div></div>
+               <div class="field"><label for="rawPort">RAW-порт (-listen-raw)</label><div class="input-wrap"><input id="rawPort" type="number" min="1" max="65535" required></div></div>
               <div class="field"><label for="password">Пароль подключения</label><div class="inline-field"><input id="password" type="text" autocomplete="off" required><button class="btn small secondary" id="generatePassword" type="button">Сгенерировать</button></div></div>
             </div>
           </div>
@@ -1446,7 +1450,7 @@ function renderState(state,fillForm=false){
   if(fillForm&&!dirty){
     setValue("dataDir",c.dataDir);setValue("webListen",portOnly(c.webListen)||3333);$("webAuth").checked=c.webAuth!==false;
     setValue("publicHost",s.publicHost);setValue("listenAddr",portOnly(s.listenAddr)||s.dtlsPort||56000);
-    setValue("wgPort",s.wgPort||56001);setValue("vpnPort",s.vpnPort||9000);setValue("password",s.password);
+    setValue("wgPort",s.wgPort||56001);setValue("rawPort",s.rawPort||56003);setValue("vpnPort",s.vpnPort||9000);setValue("password",s.password);
     setValue("interface",r.interface||"wdtt0");
     profiles=(s.profiles||[]).map(profile=>({...profile}));globalFirewall=c.firewall||{rules:[]};renderProfileEditors();updateProfilesSummary();renderGlobalFirewall(globalFirewall);updateFirewallSummary(globalFirewall);enhanceFirewallRuleControls(globalFirewall);layoutFirewallRuleNames();setupFirewallFooter();
   }
@@ -1490,7 +1494,7 @@ async function setServer(enabled){
 function formConfig(){
   return {
     enabled:!!appState?.config?.enabled,mode:"server",dataDir:$("dataDir").value||appState?.config?.dataDir||"/opt/etc/qwdtt",webListen:"0.0.0.0:"+$("webListen").value,webAuth:$("webAuth").checked,client:{},
-    server:{publicHost:$("publicHost").value.trim(),listenAddr:"0.0.0.0:"+$("listenAddr").value,dtlsPort:+$("listenAddr").value,wgPort:+$("wgPort").value,vpnPort:+$("vpnPort").value,password:$("password").value,network:appState?.config?.server?.network||"10.66.66.0/24",vkHash:"",profiles:readProfiles()},
+    server:{publicHost:$("publicHost").value.trim(),listenAddr:"0.0.0.0:"+$("listenAddr").value,dtlsPort:+$("listenAddr").value,wgPort:+$("wgPort").value,rawPort:+$("rawPort").value,vpnPort:+$("vpnPort").value,password:$("password").value,network:appState?.config?.server?.network||"10.66.66.0/24",rawNetwork:appState?.config?.server?.rawNetwork||"10.70.66.0/16",rawMtu:appState?.config?.server?.rawMtu||1300,vkHash:"",profiles:readProfiles()},
     firewall:{rules:readFirewallRules($("globalFirewallEditor"))},
     routing:{mode:"all",interface:$("interface").value||"wdtt0",wan:$("wan").value,clients:[],networks:[]}
   };
@@ -1562,7 +1566,7 @@ function renderProfileEditors(){
           <div class="profile-editor-title"><span class="profile-name-title">${escapeHTML(profile.name||"Профиль клиента")}</span></div>
         </div>
         <div class="profile-head-right">
-          <div class="profile-head-metrics"><span class="profile-badge profile-online">OFFLINE</span><span class="profile-badge profile-sessions">0 сессий</span><span class="profile-traffic-group"><span class="profile-stat down">↓ 0 бит/с</span><span class="profile-stat up">↑ 0 бит/с</span><span class="profile-total">Σ 0 Б</span></span><span class="profile-badge profile-port">${escapeHTML(profile.clientIP||"автоматически")}</span></div>
+          <div class="profile-head-metrics"><span class="profile-badge profile-online">OFFLINE</span><span class="profile-badge profile-mode">—</span><span class="profile-badge profile-sessions">0 сессий</span><span class="profile-traffic-group"><span class="profile-stat down">↓ 0 бит/с</span><span class="profile-stat up">↑ 0 бит/с</span><span class="profile-total">Σ 0 Б</span></span><span class="profile-badge profile-port">${escapeHTML(profile.clientIP||"автоматически")}</span></div>
           <button class="btn small secondary profile-connect" type="button" data-profile-id="${escapeHTML(profile.id)}" ${profile.clientIP?"":"disabled"}>QR и ссылка</button>
           <button class="btn small ghost edit-profile" type="button" aria-expanded="false">Редактировать</button>
         </div>
@@ -1582,13 +1586,14 @@ function renderProfileEditors(){
   document.querySelectorAll(".profile-editor").forEach(syncWorkerKnob);
   loadLinks();
 }
-function updateProfileTelemetry(telemetry){
+ function updateProfileTelemetry(telemetry){
   const sessionLabel=count=>{const n=Math.abs(Number(count)||0)%100,m=n%10;return `${count} ${n>10&&n<20?"сессий":m===1?"сессия":m>=2&&m<=4?"сессии":"сессий"}`};
   document.querySelectorAll("[data-traffic-profile]").forEach(card=>{
-    const metric=telemetry[card.dataset.trafficProfile]||{},status=card.querySelector(".profile-status"),online=card.querySelector(".profile-online"),sessions=card.querySelector(".profile-sessions");
+    const metric=telemetry[card.dataset.trafficProfile]||{},status=card.querySelector(".profile-status"),online=card.querySelector(".profile-online"),mode=card.querySelector(".profile-mode"),sessions=card.querySelector(".profile-sessions");
     const enabled=card.querySelector(".profile-enabled")?.checked!==false,statusText=enabled?"Профиль включён":"Профиль выключен";
     status.classList.toggle("enabled",enabled);status.title=statusText;status.setAttribute("aria-label",statusText);
-    online.classList.toggle("connected",!!metric.connected);online.textContent=metric.connected?"ONLINE":"OFFLINE";
+     online.classList.toggle("connected",!!metric.connected);online.textContent=metric.connected?"ONLINE":"OFFLINE";
+     mode.textContent=metric.mode||"—";mode.classList.toggle("connected",!!metric.mode);
     sessions.textContent=sessionLabel(metric.sessions||0);
     card.querySelector(".down").textContent="↓ "+formatRate(metric.rxRate||0);
     card.querySelector(".up").textContent="↑ "+formatRate(metric.txRate||0);

@@ -61,6 +61,9 @@ type ServerConfig struct {
 	Network    string              `json:"network"`
 	VKHash     string              `json:"vkHash"`
 	Profiles   []ConnectionProfile `json:"profiles"`
+	RawPort    int                 `json:"rawPort"`
+	RawNetwork string              `json:"rawNetwork"`
+	RawMTU     int                 `json:"rawMtu"`
 }
 
 // ConnectionProfile represents one client identity. Each profile receives a
@@ -125,6 +128,19 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Server.Network) == "" {
 		return fmt.Errorf("server.network is required")
+	}
+	if c.Server.RawPort < 0 || c.Server.RawPort > 65535 {
+		return fmt.Errorf("server.rawPort must be between 1 and 65535")
+	}
+	if c.Server.RawPort > 0 {
+		if _, rawNetwork, rawErr := net.ParseCIDR(c.Server.RawNetwork); rawErr != nil || rawNetwork.IP.To4() == nil {
+			return fmt.Errorf("server.rawNetwork must be an IPv4 CIDR")
+		} else if ones, bits := rawNetwork.Mask.Size(); bits != 32 || ones != 16 {
+			return fmt.Errorf("server.rawNetwork must be an IPv4 /16 network")
+		}
+		if c.Server.RawMTU < 576 || c.Server.RawMTU > 1500 {
+			return fmt.Errorf("server.rawMtu must be between 576 and 1500")
+		}
 	}
 	ip, network, err := net.ParseCIDR(c.Server.Network)
 	if err != nil {
@@ -248,6 +264,15 @@ func validateFirewallValues(addresses, ports []string) error {
 // NormalizeProfiles migrates legacy single-profile configurations and fills
 // fields that may be omitted by older control panels.
 func (c *Config) NormalizeProfiles() {
+	if c.Server.RawPort == 0 {
+		c.Server.RawPort = 56003
+	}
+	if strings.TrimSpace(c.Server.RawNetwork) == "" {
+		c.Server.RawNetwork = "10.70.66.0/16"
+	}
+	if c.Server.RawMTU == 0 {
+		c.Server.RawMTU = 1300
+	}
 	c.Server.VKHash = normalizeVKHash(c.Server.VKHash)
 	if c.Server.Profiles == nil {
 		port := c.Server.DTLSPort

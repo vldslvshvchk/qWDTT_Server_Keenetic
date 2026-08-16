@@ -156,10 +156,13 @@ if [ "$1" = "delete" ]; then
 
 	CFG=/opt/etc/qwdtt/config.json
 	NETWORK=10.66.0.0/16
+	RAW_NETWORK=10.70.66.0/16
 	WAN=br0
 	if [ -f "$CFG" ]; then
 		VALUE=$(sed -n 's/.*"network"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -n 1)
 		[ -n "$VALUE" ] && NETWORK=$VALUE
+		VALUE=$(sed -n 's/.*"rawNetwork"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -n 1)
+		[ -n "$VALUE" ] && RAW_NETWORK=$VALUE
 		VALUE=$(sed -n 's/.*"wan"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -n 1)
 		[ -n "$VALUE" ] && WAN=$VALUE
 	fi
@@ -178,6 +181,13 @@ if [ "$1" = "delete" ]; then
 	[ "$WAN" = "br0" ] || iptables -t nat -D POSTROUTING -s "$NETWORK" -o br0 -j MASQUERADE 2>/dev/null || true
 	rm -f /opt/etc/ndm/netfilter.d/60-qwdtt-netfilter.sh
 	ip link del wdtt0 2>/dev/null || true
+	ip link del wdttraw0 2>/dev/null || true
+	iptables -D INPUT -i wdttraw0 -j ACCEPT 2>/dev/null || true
+	iptables -D FORWARD -i wdttraw0 -j ACCEPT 2>/dev/null || true
+	iptables -D FORWARD -o wdttraw0 -j ACCEPT 2>/dev/null || true
+	iptables -t nat -D POSTROUTING -s "$RAW_NETWORK" -o "$WAN" -j MASQUERADE 2>/dev/null || true
+	iptables -t nat -D POSTROUTING -s "$RAW_NETWORK" -j MASQUERADE 2>/dev/null || true
+	[ "$WAN" = "br0" ] || iptables -t nat -D POSTROUTING -s "$RAW_NETWORK" -o br0 -j MASQUERADE 2>/dev/null || true
 	opkg remove qwdtt >/dev/null 2>&1 || true
 	rm -rf /opt/etc/qwdtt
 	rm -f /opt/bin/qwdtt "$0"

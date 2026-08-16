@@ -1,6 +1,8 @@
 package qwdtt
 
 import (
+	"bytes"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -22,6 +24,9 @@ type WrapState struct {
 	timestamp uint32
 	last      time.Time
 	count     uint64
+	aead      cipher.AEAD
+	key       [wrapKeyLen]byte
+	keySet    bool
 }
 
 func NewWrapState() *WrapState {
@@ -122,10 +127,20 @@ func WrapPacket(key, payload []byte, cfg WrapConfig, state *WrapState) ([]byte, 
 	binary.BigEndian.PutUint16(out[2:4], seq)
 	binary.BigEndian.PutUint32(out[4:8], ts)
 	binary.BigEndian.PutUint32(out[8:12], cfg.SSRC)
-	aead, err := chacha20poly1305.New(key)
-	if err != nil {
-		return nil, err
+	state.mu.Lock()
+	aead := state.aead
+	if !state.keySet || !bytes.Equal(state.key[:], key) || aead == nil {
+		var err error
+		aead, err = chacha20poly1305.New(key)
+		if err != nil {
+			state.mu.Unlock()
+			return nil, err
+		}
+		state.aead = aead
+		copy(state.key[:], key)
+		state.keySet = true
 	}
+	state.mu.Unlock()
 	sealed := aead.Seal(out[12:12], nonce, payload, out[:12])
 	if padding > 0 {
 		_, _ = rand.Read(out[12+len(sealed) : 12+len(sealed)+padding])
@@ -152,6 +167,27 @@ func UnwrapPacket(key, wire, dst []byte) (int, error) {
 	aead, err := chacha20poly1305.New(key)
 	if err != nil {
 		return 0, err
+	}
+	return unwrapPacket(aead, wire, dst)
+}
+
+func unwrapPacket(aead cipher.AEAD, wire, dst []byte) (int, error) {
+	if aead == nil {
+		return 0, errors.New("nil WRAP cipher")
+	}
+	if len(wire) < 13 || wire[0]>>6 != 2 {
+		return 0, errors.New("invalid WRAP packet")
+	}
+	end := len(wire)
+	if wire[0]&0x20 != 0 {
+		p := int(wire[len(wire)-1])
+		if p == 0 || p > end-12 {
+			return 0, errors.New("invalid padding")
+		}
+		end -= p
+	}
+	if end-12 <= chacha20poly1305.Overhead {
+		return 0, errors.New("no payload")
 	}
 	plain, err := aead.Open(dst[:0], buildNonce(binary.BigEndian.Uint32(wire[8:12]), binary.BigEndian.Uint16(wire[2:4]), binary.BigEndian.Uint32(wire[4:8])), wire[12:end], wire[:12])
 	if err != nil {

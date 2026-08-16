@@ -158,6 +158,17 @@ func (s Service) startServer(ctx context.Context) error {
 	} else {
 		s.Logs.Add("INFO", "DTLS firewall ready: UDP %d is first in INPUT; enabled profiles=%d", port, len(enabled))
 	}
+	if s.Config.Server.RawPort > 0 {
+		if s.Config.Server.RawPort == port {
+			s.Logs.Add("INFO", "raw mode configured for shared UDP port %d (clients select WG or RAW)", port)
+		} else if err := s.startRaw(ctx, enabled, wg.Runner); err != nil {
+			s.Logs.Add("ERROR", "raw mode disabled: %v", err)
+		} else if e := EnsureDTLSWAN(ctx, wg.Runner, s.Config.Routing.WAN, s.Config.Server.RawPort); e != nil {
+			s.Logs.Add("ERROR", "raw firewall rule failed: %v", e)
+		} else {
+			s.Logs.Add("INFO", "raw mode enabled: UDP %d", s.Config.Server.RawPort)
+		}
+	}
 	return s.serveProfiles(ctx, enabled)
 }
 
@@ -214,6 +225,13 @@ func (s Service) serveProfiles(ctx context.Context, profiles []ConnectionProfile
 	log.Printf("qWDTT server listening for %d profiles on %s", len(profiles), addr)
 	s.Logs.Add("INFO", "shared DTLS listener started on %s", addr)
 	go func() { <-ctx.Done(); _ = listener.Close() }()
+	if s.Config.Server.RawPort > 0 && s.Config.Server.RawPort == port {
+		if err := s.startRawOnListener(ctx, profiles, listener.wrapped, s.WGPtr.Runner); err != nil {
+			s.Logs.Add("ERROR", "raw mode disabled: %v", err)
+		} else {
+			s.Logs.Add("INFO", "RAW demultiplexer enabled on shared UDP port %s", addr)
+		}
+	}
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -261,7 +279,7 @@ func (s Service) handleConnection(ctx context.Context, conn net.Conn, profiles m
 		return
 	}
 	s.Logs.Add("INFO", "[DTLS %s] selected profile=%q id=%s", remote, profile.Name, profile.ID)
-	profileTraffic := s.ProfileTraffic.Connect(profile.ID)
+	profileTraffic := s.ProfileTraffic.ConnectMode(profile.ID, "WG")
 	defer s.ProfileTraffic.Disconnect(profileTraffic)
 	phase = "initial-command"
 	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))

@@ -17,6 +17,9 @@ WAN=$(sed -n 's/.*"wan"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | he
 # is server.dtlsPort; profile copies that follow have the same shared value.
 DTLS=$(sed -n 's/.*"dtlsPort"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CFG" | awk '$1 + 0 > 0 { print; exit }')
 [ -n "$DTLS" ] || DTLS=56000
+RAWPORT=$(sed -n 's/.*"rawPort"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CFG" | awk '$1 + 0 > 0 { print; exit }')
+RAWNETWORK=$(sed -n 's/.*"rawNetwork"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -1)
+[ -n "$RAWNETWORK" ] || RAWNETWORK=10.70.66.0/16
 
 run() { "$IPTABLES" -w "$@" 2>/dev/null || "$IPTABLES" "$@" 2>/dev/null; }
 
@@ -34,12 +37,26 @@ if [ "$table" = nat ]; then
 		run -t nat -C POSTROUTING -s "$NETWORK" -o br0 -j MASQUERADE || \
 		run -t nat -A POSTROUTING -s "$NETWORK" -o br0 -j MASQUERADE
 	fi
+	if [ -n "$RAWPORT" ]; then
+		run -t nat -C POSTROUTING -s "$RAWNETWORK" -o "$WAN" -j MASQUERADE || \
+			run -t nat -I POSTROUTING 1 -s "$RAWNETWORK" -o "$WAN" -j MASQUERADE
+	fi
 else
 	# Keep the DTLS exception ahead of Keenetic's terminal INPUT rejects.
 	# Remove old/appended copies first so -C cannot hide a rule in the wrong
 	# position after NDMS rebuilds the firewall.
 	while run -D INPUT -p udp --dport "$DTLS" -j ACCEPT; do :; done
 	run -I INPUT 1 -p udp --dport "$DTLS" -j ACCEPT
+	if [ -n "$RAWPORT" ]; then
+		while run -D INPUT -p udp --dport "$RAWPORT" -j ACCEPT; do :; done
+		run -I INPUT 1 -p udp --dport "$RAWPORT" -j ACCEPT
+		while run -D FORWARD -i wdttraw0 -j ACCEPT; do :; done
+		while run -D FORWARD -o wdttraw0 -j ACCEPT; do :; done
+		while run -D INPUT -i wdttraw0 -j ACCEPT; do :; done
+		run -I FORWARD 1 -i wdttraw0 -j ACCEPT
+		run -I FORWARD 1 -o wdttraw0 -j ACCEPT
+		run -I INPUT 1 -i wdttraw0 -j ACCEPT
+	fi
 	run -N QWDTT_PROFILE_FWD || true
 	run -N QWDTT_PROFILE_IN || true
 	run -F QWDTT_PROFILE_FWD

@@ -27,11 +27,13 @@ type ProfileTraffic struct {
 
 type ProfileSession struct {
 	traffic  *ProfileTraffic
+	mode     string
 	lastSeen atomic.Int64
 }
 
 type ProfileTrafficSnapshot struct {
 	Connected bool       `json:"connected"`
+	Mode      string     `json:"mode,omitempty"`
 	Sessions  int64      `json:"sessions"`
 	RXBytes   uint64     `json:"rxBytes"`
 	TXBytes   uint64     `json:"txBytes"`
@@ -50,6 +52,10 @@ func NewProfileTrafficTracker() *ProfileTrafficTracker {
 }
 
 func (t *ProfileTrafficTracker) Connect(profileID string) *ProfileSession {
+	return t.ConnectMode(profileID, "WG")
+}
+
+func (t *ProfileTrafficTracker) ConnectMode(profileID, mode string) *ProfileSession {
 	if t == nil {
 		return nil
 	}
@@ -65,7 +71,7 @@ func (t *ProfileTrafficTracker) Connect(profileID string) *ProfileSession {
 		}
 		t.mu.Unlock()
 	}
-	session := &ProfileSession{traffic: traffic}
+	session := &ProfileSession{traffic: traffic, mode: mode}
 	session.touch()
 	traffic.sessionsMu.Lock()
 	traffic.sessions[session] = struct{}{}
@@ -125,11 +131,15 @@ func (t *ProfileTraffic) snapshot() ProfileTrafficSnapshot {
 	rx, tx := t.rx.Load(), t.tx.Load()
 	lastSeenValue := t.lastSeen.Load()
 	activeSessions := int64(0)
+	activeModes := make(map[string]bool)
 	t.sessionsMu.RLock()
 	for session := range t.sessions {
 		value := session.lastSeen.Load()
 		if value > 0 && now.Sub(time.Unix(0, value)) <= profileOnlineWindow {
 			activeSessions++
+			if session.mode != "" {
+				activeModes[session.mode] = true
+			}
 		}
 	}
 	t.sessionsMu.RUnlock()
@@ -138,6 +148,14 @@ func (t *ProfileTraffic) snapshot() ProfileTrafficSnapshot {
 		Sessions:  activeSessions,
 		RXBytes:   rx,
 		TXBytes:   tx,
+	}
+	switch {
+	case activeModes["RAW"] && activeModes["WG"]:
+		result.Mode = "RAW+WG"
+	case activeModes["RAW"]:
+		result.Mode = "RAW"
+	case activeModes["WG"]:
+		result.Mode = "WG"
 	}
 	if lastSeenValue > 0 {
 		lastSeen := time.Unix(0, lastSeenValue)

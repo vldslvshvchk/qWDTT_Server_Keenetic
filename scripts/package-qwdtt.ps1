@@ -88,12 +88,15 @@ exit 0
 INIT=/opt/etc/init.d/S99qwdtt
 CFG=/opt/etc/qwdtt/config.json
 NETWORK=10.66.0.0/16
+RAW_NETWORK=10.70.66.0/16
 WAN=br0
 INTERFACE=wdtt0
 
 if [ -f "$CFG" ]; then
     VALUE=$(sed -n 's/.*"network"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -n 1)
     [ -n "$VALUE" ] && NETWORK=$VALUE
+    VALUE=$(sed -n 's/.*"rawNetwork"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' /opt/etc/qwdtt/config.json | head -n 1)
+    [ -n "$VALUE" ] && RAW_NETWORK=$VALUE
     VALUE=$(sed -n 's/.*"wan"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -n 1)
     [ -n "$VALUE" ] && WAN=$VALUE
     VALUE=$(sed -n 's/.*"interface"[[:space:]]*:[[:space:]]*"\([^" ]*\)".*/\1/p' "$CFG" | head -n 1)
@@ -120,6 +123,13 @@ iptables -t nat -D POSTROUTING -s "$NETWORK" -o "$WAN" -j MASQUERADE 2>/dev/null
 iptables -t nat -D POSTROUTING -s "$NETWORK" -j MASQUERADE 2>/dev/null || true
 [ "$WAN" = "br0" ] || iptables -t nat -D POSTROUTING -s "$NETWORK" -o br0 -j MASQUERADE 2>/dev/null || true
 ip link del "$INTERFACE" 2>/dev/null || true
+ip link del wdttraw0 2>/dev/null || true
+iptables -D INPUT -i wdttraw0 -j ACCEPT 2>/dev/null || true
+iptables -D FORWARD -i wdttraw0 -j ACCEPT 2>/dev/null || true
+iptables -D FORWARD -o wdttraw0 -j ACCEPT 2>/dev/null || true
+iptables -t nat -D POSTROUTING -s "$RAW_NETWORK" -o "$WAN" -j MASQUERADE 2>/dev/null || true
+iptables -t nat -D POSTROUTING -s "$RAW_NETWORK" -j MASQUERADE 2>/dev/null || true
+[ "$WAN" = "br0" ] || iptables -t nat -D POSTROUTING -s "$RAW_NETWORK" -o br0 -j MASQUERADE 2>/dev/null || true
 exit 0
 '@
 	Write-Text (Join-Path $control "postrm") @'

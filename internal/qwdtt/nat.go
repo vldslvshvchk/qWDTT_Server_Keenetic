@@ -47,7 +47,15 @@ func EnsureDTLSWAN(ctx context.Context, r CommandRunner, wan string, port int) e
 			break
 		}
 	}
-	return r.Run(ctx, "iptables", append([]string{"-I", "INPUT", "1"}, args...)...)
+	if err := r.Run(ctx, "iptables", append([]string{"-I", "INPUT", "1"}, args...)...); err != nil {
+		return err
+	}
+	// Some Keenetic installations resolve the public hostname to IPv6. The
+	// Go UDP socket may appear as :::port, but IPv6 traffic is still filtered
+	// by a separate ip6tables policy. Open the same listener there when the
+	// firmware provides ip6tables; IPv4-only firmware is allowed to fail.
+	_ = r.Run(ctx, "ip6tables", append([]string{"-I", "INPUT", "1"}, args...)...)
+	return nil
 }
 
 func RemoveDTLSWAN(ctx context.Context, r CommandRunner, wan string, port int) {
@@ -64,6 +72,7 @@ func RemoveDTLSWAN(ctx context.Context, r CommandRunner, wan string, port int) {
 	redirect := []string{"-p", "udp", "--dport", fmt.Sprint(port), "-j", "REDIRECT", "--to-ports", fmt.Sprint(port)}
 	_ = r.Run(ctx, "iptables", append([]string{"-t", "nat", "-D", "PREROUTING"}, redirect...)...)
 	_ = r.Run(ctx, "iptables", append([]string{"-D", "INPUT"}, args...)...)
+	_ = r.Run(ctx, "ip6tables", append([]string{"-D", "INPUT"}, args...)...)
 }
 
 func EnsureNATMode(ctx context.Context, r CommandRunner, wan, network string, internetOnly bool) error {
