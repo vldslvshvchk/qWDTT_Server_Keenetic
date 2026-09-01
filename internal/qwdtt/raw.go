@@ -362,7 +362,7 @@ func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, run
 	// The classifier is normally driven by the DTLS listener on a shared
 	// port. For a separate -listen-raw port, drive it explicitly so rawCh
 	// receives the classified endpoints.
-	go func() {
+	s.startSession(func() {
 		for {
 			pc, _, e := listener.Accept()
 			if e != nil {
@@ -370,8 +370,8 @@ func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, run
 			}
 			_ = pc.Close()
 		}
-	}()
-	go func() {
+	})
+	s.startSession(func() {
 		for {
 			pc, remote, first, e := listener.AcceptRaw()
 			if e != nil {
@@ -381,7 +381,7 @@ func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, run
 				continue
 			}
 			s.Logs.Add("INFO", "[RAW %s] UDP endpoint accepted", remote)
-			go func(pc net.PacketConn, remote net.Addr, first []byte) {
+			s.startSession(func() {
 				c := &rawNetConn{pc: pc, addr: remote}
 				defer c.Close()
 				var err error
@@ -399,9 +399,9 @@ func (s Service) startRaw(ctx context.Context, profiles []ConnectionProfile, run
 				if err := s.handleRaw(ctx, c, router, profile, string(first)); err != nil {
 					s.Logs.Add("WARN", "raw client %s: %v", remote, err)
 				}
-			}(pc, remote, first)
+			})
 		}
-	}()
+	})
 	return cleanup, nil
 }
 
@@ -424,14 +424,14 @@ func (s Service) startRawOnListener(ctx context.Context, profiles []ConnectionPr
 		<-ctx.Done()
 		router.close()
 	}()
-	go func() {
+	s.startSession(func() {
 		for {
 			pc, remote, first, err := listener.AcceptRaw()
 			if err != nil {
 				return
 			}
 			s.Logs.Add("INFO", "[RAW %s] shared-port endpoint accepted", remote)
-			go func(pc net.PacketConn, remote net.Addr, first []byte) {
+			s.startSession(func() {
 				c := &rawNetConn{pc: pc, addr: remote}
 				defer c.Close()
 				var err error
@@ -449,9 +449,9 @@ func (s Service) startRawOnListener(ctx context.Context, profiles []ConnectionPr
 				if err := s.handleRaw(ctx, c, router, profile, string(first)); err != nil {
 					s.Logs.Add("WARN", "raw client %s: %v", remote, err)
 				}
-			}(pc, remote, first)
+			})
 		}
-	}()
+	})
 	return nil
 }
 

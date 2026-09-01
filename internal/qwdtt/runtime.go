@@ -24,6 +24,7 @@ type Runtime struct {
 	cancel         context.CancelFunc
 	done           chan struct{}
 	run            bool
+	transitioning  bool
 	gen            uint64
 	traffic        *TrafficStats
 	profileTraffic *ProfileTrafficTracker
@@ -52,6 +53,12 @@ func (r *Runtime) Running() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.run
+}
+
+func (r *Runtime) Transitioning() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.transitioning
 }
 
 func (r *Runtime) Config() Config {
@@ -143,6 +150,14 @@ func (r *Runtime) reconcile() error {
 	// would leave the previous RAW listener holding UDP 56003.
 	r.reconcileMu.Lock()
 	defer r.reconcileMu.Unlock()
+	r.mu.Lock()
+	r.transitioning = true
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.transitioning = false
+		r.mu.Unlock()
+	}()
 
 	r.mu.Lock()
 	oldDone := r.done

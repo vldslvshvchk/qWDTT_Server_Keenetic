@@ -37,6 +37,7 @@ type Service struct {
 	Traffic        *TrafficStats
 	ProfileTraffic *ProfileTrafficTracker
 	peers          *peerStore
+	sessions       *sync.WaitGroup
 }
 
 type clientPeer struct {
@@ -82,7 +83,20 @@ func (s Service) Start(ctx context.Context) error {
 	if !s.Config.Enabled {
 		return fmt.Errorf("qwdtt is disabled")
 	}
-	return s.startServer(ctx)
+	s.sessions = &sync.WaitGroup{}
+	err := s.startServer(ctx)
+	// A transport instance is not stopped until every accepted DTLS/RAW
+	// session has released its socket and per-client state.
+	s.sessions.Wait()
+	return err
+}
+
+func (s Service) startSession(fn func()) {
+	s.sessions.Add(1)
+	go func() {
+		defer s.sessions.Done()
+		fn()
+	}()
 }
 
 func (s Service) startClient(ctx context.Context) error {
@@ -252,7 +266,7 @@ func (s Service) serveProfiles(ctx context.Context, profiles []ConnectionProfile
 				continue
 			}
 		}
-		go s.handleConnection(ctx, conn, profilesByID, listener.ProfileID)
+		s.startSession(func() { s.handleConnection(ctx, conn, profilesByID, listener.ProfileID) })
 	}
 }
 

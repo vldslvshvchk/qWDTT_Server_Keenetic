@@ -1436,16 +1436,17 @@ function switchView(name){
   if(name==="logs")loadLogs();
   window.scrollTo({top:0,behavior:"smooth"});
 }
-function renderStatus(running){
+function renderStatus(running,transitioning=false,enabled=running){
   document.querySelectorAll("[data-status-dot]").forEach(el=>el.classList.toggle("on",running));
-  document.querySelectorAll("[data-status-text]").forEach(el=>el.textContent=running?"Сервер работает":"Сервер выключен");
+  document.querySelectorAll("[data-status-text]").forEach(el=>el.textContent=transitioning?(enabled?"Запуск…":"Остановка…"):(running?"Сервер работает":"Сервер выключен"));
   $("trafficLive").classList.toggle("offline",!running);
   $("trafficLive").querySelector("span").textContent=running?"LIVE":"OFFLINE";
-  $("headerToggle").textContent=running?"Остановить":"Запустить";
+  $("headerToggle").textContent=transitioning?"Подождите…":(running?"Остановить":"Запустить");
+  $("headerToggle").disabled=transitioning||busy;
 }
 function renderState(state,fillForm=false){
   appState=state;const c=state.config,s=c.server,r=c.routing,t=state.traffic||{},version="Версия "+(state.version||"dev");$("appVersionTop").textContent=version;
-  renderStatus(state.running);
+  renderStatus(state.running,state.transitioning,state.config?.enabled);
   setTrafficTargets(t);
   if(fillForm&&!dirty){
     setValue("dataDir",c.dataDir);setValue("webListen",portOnly(c.webListen)||3333);$("webAuth").checked=c.webAuth!==false;

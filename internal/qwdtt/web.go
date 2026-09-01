@@ -94,9 +94,10 @@ func WebHandler(cfg *Config, path string, logs *LogBook, runtime ...*Runtime) ht
 			Version        string                            `json:"version"`
 			Config         Config                            `json:"config"`
 			Running        bool                              `json:"running"`
+			Transitioning  bool                              `json:"transitioning"`
 			Traffic        TrafficSnapshot                   `json:"traffic"`
 			ProfileTraffic map[string]ProfileTrafficSnapshot `json:"profileTraffic"`
-		}{ServerVersion(), currentConfig(), rt != nil && rt.Running(), TrafficSnapshot{}, map[string]ProfileTrafficSnapshot{}}
+		}{ServerVersion(), currentConfig(), rt != nil && rt.Running(), rt != nil && rt.Transitioning(), TrafficSnapshot{}, map[string]ProfileTrafficSnapshot{}}
 		if rt != nil {
 			state.Traffic = rt.traffic.Snapshot()
 			state.ProfileTraffic = rt.profileTraffic.Snapshot()

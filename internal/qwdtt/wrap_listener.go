@@ -172,6 +172,15 @@ func (l *wrappedListener) Close() error {
 	var err error
 	l.close.Do(func() {
 		close(l.closed)
+		// Closing the listening socket alone does not guarantee that accepted
+		// per-endpoint PacketConns have stopped. Close every tracked endpoint so
+		// blocked DTLS/RAW reads wake immediately during a transport restart.
+		l.conns.Range(func(_, value any) bool {
+			if conn, ok := value.(*wrappedConn); ok {
+				_ = conn.Close()
+			}
+			return true
+		})
 		err = l.inner.Close()
 	})
 	return err

@@ -9,8 +9,8 @@ import (
 type TrafficStats struct {
 	mu         sync.Mutex
 	last       time.Time
-	rx         uint64
-	tx         uint64
+	rx         atomic.Uint64
+	tx         atomic.Uint64
 	prevRX     uint64
 	prevTX     uint64
 	prev       time.Time
@@ -28,12 +28,12 @@ type TrafficSnapshot struct {
 
 func (t *TrafficStats) AddRX(n int) {
 	if t != nil && n > 0 {
-		atomic.AddUint64(&t.rx, uint64(n))
+		t.rx.Add(uint64(n))
 	}
 }
 func (t *TrafficStats) AddTX(n int) {
 	if t != nil && n > 0 {
-		atomic.AddUint64(&t.tx, uint64(n))
+		t.tx.Add(uint64(n))
 	}
 }
 func (t *TrafficStats) Snapshot() TrafficSnapshot {
@@ -43,8 +43,8 @@ func (t *TrafficStats) Snapshot() TrafficSnapshot {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
-	rx := atomic.LoadUint64(&t.rx)
-	tx := atomic.LoadUint64(&t.tx)
+	rx := t.rx.Load()
+	tx := t.tx.Load()
 	if t.prev.IsZero() {
 		t.prev, t.prevRX, t.prevTX = now, rx, tx
 		return TrafficSnapshot{RXBytes: rx, TXBytes: tx}
